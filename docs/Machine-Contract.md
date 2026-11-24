@@ -1,9 +1,9 @@
-# Machine Contract (draft v1)
+# Machine Contract (v1)
 
-> Status: **proposed, not yet implemented**. This document defines the observable
-> machine that future assemblers, emulators, and ROMs must agree on. It is the
-> first step toward an Uxn-shaped platform: a frozen core, a binary image format,
-> and a thin host layer.
+> Status: **implemented and frozen**. This document defines the observable
+> machine that the assembler, emulator, and ROMs agree on. It is the first step
+> toward an Uxn-shaped platform: a frozen core, a binary image format, and a thin
+> host layer.
 
 ## 0. Decisions
 
@@ -13,9 +13,9 @@
 | Address space | 64 KiB, byte-addressed, 16-bit addresses |
 | Instruction encoding | 8-bit opcode with fixed, per-opcode immediate widths |
 
-Non-goals for this contract: migration, networking, state serialization, dynamic
-memory growth, and host-specific I/O policy. The machine is local and has no
-serialized-state ABI.
+Non-goals for this contract: moving a running machine between hosts, dynamic
+memory growth, and host-specific I/O policy. The machine is local; ROMs are its
+distribution unit.
 
 ## 1. Design principles
 
@@ -174,22 +174,22 @@ transitional opcodes listed in §6. A host provides:
 Printing with tick prefixes (`-D`) and instruction tracing (`-t`) are host
 policies, not machine state.
 
-## 11. Implementation impact
+## 11. Implementation status
 
-To conform, the current codebase will need these changes:
+The current codebase conforms to this contract:
 
-1. Replace the `VmInst[]` program with bytes in `mem`; `vm_step` fetches and
-   decodes from `ip`.
-2. Replace growable buffers with fixed arrays in `VmState`; remove `realloc`
-   from the core.
-3. Change `ip`/jump targets from instruction indices to byte addresses.
-4. Make the assembler emit a `.rom` image with the header above, and key its line
-   map by byte address instead of instruction index. Static data can stay in the
-   image region and be addressed directly; the current prologue that copies data
-   into the heap is no longer required.
-5. Add a ROM loader to `vm-cli`; rebuild the examples as ROMs.
-6. Adapt tests to byte-encoded programs, then add a conformance image that any
-   emulator implementation must pass.
+1. Programs are bytes in `mem`; `vm_step` fetches and decodes from `ip`.
+2. `VmState` contains fixed arrays for RAM, stack, frames, and block metadata;
+   the core never calls `realloc`.
+3. `ip`, jump/call targets, `CALL` return addresses, and assembler labels are
+   absolute 16-bit byte addresses.
+4. The assembler emits a `VMIM` ROM with the header above and maps source lines
+   by absolute byte address. Static data stays in the image region and is
+   addressed directly; the image is not copied into the heap.
+5. `vm-cli run` accepts assembly source or a ROM, and `vm-cli build` writes a
+   ROM. The examples run unchanged from source and can be rebuilt as ROMs.
+6. Tests use byte-encoded programs and include ROM header/loader checks. A
+   standalone conformance image for third-party emulators remains a future
+   toolchain item.
 
-Until step 3 of the roadmap lands, `PRINT`/`READ_*` stay as core opcodes so
-existing programs continue to run.
+Until the device layer lands, `PRINT`/`READ_*` stay as core opcodes.

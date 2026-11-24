@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -12,6 +13,54 @@ static int failures;
             failures++;                                                         \
         }                                                                       \
     } while (0)
+
+static uint64_t read_be(const uint8_t *p, unsigned width)
+{
+    uint64_t v = 0;
+    for (unsigned i = 0; i < width; i++) v = (v << 8) | (uint64_t)p[i];
+    return v;
+}
+
+/* Absolute RAM address of the first byte of the Nth emitted instruction. */
+static size_t inst_offset(const AsmProgram *prog, size_t index)
+{
+    size_t off = (size_t)read_be(prog->bytes + 1u, 2u) - VM_IMAGE_START;
+    while (index-- > 0u) {
+        if (off >= prog->len) return prog->len;
+        off += vm_inst_size(prog->bytes[off]);
+    }
+    return off;
+}
+
+static uint8_t op_at(const AsmProgram *prog, size_t index)
+{
+    return prog->bytes[inst_offset(prog, index)];
+}
+
+static int64_t arg_at(const AsmProgram *prog, size_t index)
+{
+    size_t off = inst_offset(prog, index);
+    unsigned width = (unsigned)vm_inst_size(prog->bytes[off]) - 1u;
+    return (int64_t)read_be(prog->bytes + off + 1u, width);
+}
+
+static size_t inst_count(const AsmProgram *prog)
+{
+    size_t off = (size_t)read_be(prog->bytes + 1u, 2u) - VM_IMAGE_START;
+    size_t n = 0;
+    while (off < prog->len) {
+        off += vm_inst_size(prog->bytes[off]);
+        n++;
+    }
+    return n;
+}
+
+static void run_ok(const AsmProgram *prog, VmState *vm)
+{
+    vm_init(vm);
+    CHECK(vm_load_image(vm, prog->bytes, prog->len, VM_IMAGE_START) == VM_OK);
+    CHECK(vm_run(vm, 0) == VM_HALTED);
+}
 
 static void expect_error(const char *src, size_t line, const char *needle)
 {
@@ -37,21 +86,21 @@ static void test_parse_and_run(void)
 
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, src) == 0);
-    if (prog.count != 7u) {
-        CHECK(prog.count == 7u);
-        fprintf(stderr, "  parse error: %s\n", prog.error);
-    } else {
-        CHECK(prog.insts[0].op == OP_PUSH && prog.insts[0].arg == 16);
-        CHECK(prog.insts[1].op == OP_PUSH && prog.insts[1].arg == -3);
-        CHECK(prog.insts[2].op == OP_ADD);
-        CHECK(prog.insts[3].op == OP_DUP);
-        CHECK(prog.insts[4].op == OP_JMP_Z && prog.insts[4].arg == 6);
-        CHECK(prog.insts[5].op == OP_JMP && prog.insts[5].arg == 6);
-        CHECK(prog.insts[6].op == OP_HALT);
+    CHECK(inst_count(&prog) == 7u);
+    if (prog.len > 0u) {
+        CHECK(prog.bytes[0] == OP_JMP); /* skip the data area */
+        CHECK(op_at(&prog, 0) == OP_PUSH && arg_at(&prog, 0) == 16);
+        CHECK(op_at(&prog, 1) == OP_PUSH && arg_at(&prog, 1) == -3);
+        CHECK(op_at(&prog, 2) == OP_ADD);
+        CHECK(op_at(&prog, 3) == OP_DUP);
+        CHECK(op_at(&prog, 4) == OP_JMP_Z &&
+              arg_at(&prog, 4) == (int64_t)(VM_IMAGE_START + inst_offset(&prog, 6)));
+        CHECK(op_at(&prog, 5) == OP_JMP &&
+              arg_at(&prog, 5) == (int64_t)(VM_IMAGE_START + inst_offset(&prog, 6)));
+        CHECK(op_at(&prog, 6) == OP_HALT);
 
         VmState vm;
-        vm_init(&vm);
-        CHECK(vm_run(&vm, prog.insts, prog.count, 0) == VM_HALTED);
+        run_ok(&prog, &vm);
         CHECK(vm.sp == 1u && vm.stack[0] == 13);
         vm_free(&vm);
     }
@@ -69,14 +118,12 @@ static void test_file(void)
 
     AsmProgram prog;
     CHECK(asm_parse_file(&prog, path) == 0);
-    if (prog.count == 4u) {
+    CHECK(inst_count(&prog) == 4u);
+    if (prog.len > 0u) {
         VmState vm;
-        vm_init(&vm);
-        CHECK(vm_run(&vm, prog.insts, prog.count, 0) == VM_HALTED);
+        run_ok(&prog, &vm);
         CHECK(vm.sp == 1u && vm.stack[0] == 42);
         vm_free(&vm);
-    } else {
-        CHECK(prog.count == 4u);
     }
     asm_program_free(&prog);
     remove(path);
@@ -91,16 +138,14 @@ static void test_i64_literals(void)
         "HALT\n";
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, src) == 0);
-    if (prog.count == 4u) {
-        CHECK(prog.insts[0].arg == INT64_MAX);
-        CHECK(prog.insts[1].arg == INT64_MIN);
+    CHECK(inst_count(&prog) == 4u);
+    if (prog.len > 0u) {
+        CHECK(arg_at(&prog, 0) == INT64_MAX);
+        CHECK(arg_at(&prog, 1) == INT64_MIN);
         VmState vm;
-        vm_init(&vm);
-        CHECK(vm_run(&vm, prog.insts, prog.count, 0) == VM_HALTED);
+        run_ok(&prog, &vm);
         CHECK(vm.sp == 1u && vm.stack[0] == -1);
         vm_free(&vm);
-    } else {
-        CHECK(prog.count == 4u);
     }
     asm_program_free(&prog);
 
@@ -114,27 +159,24 @@ static void test_new_opcodes(void)
         "and\nor\nxor\nnot\nshl\nshr\nlnot\nland\nlor\nHALT\n";
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, src) == 0);
-    if (prog.count == 17u) {
-        CHECK(prog.insts[0].op == OP_DIV);
-        CHECK(prog.insts[1].op == OP_MOD);
-        CHECK(prog.insts[2].op == OP_CMP_EQ);
-        CHECK(prog.insts[5].op == OP_CMP_GT);
-        CHECK(prog.insts[8].op == OP_OR);
-        CHECK(prog.insts[10].op == OP_NOT);
-        CHECK(prog.insts[12].op == OP_SHR);
-        CHECK(prog.insts[15].op == OP_LOR);
-    } else {
-        CHECK(prog.count == 17u);
-        fprintf(stderr, "  parse error: %s\n", prog.error);
+    CHECK(inst_count(&prog) == 17u);
+    if (prog.len > 0u) {
+        CHECK(op_at(&prog, 0) == OP_DIV);
+        CHECK(op_at(&prog, 1) == OP_MOD);
+        CHECK(op_at(&prog, 2) == OP_CMP_EQ);
+        CHECK(op_at(&prog, 5) == OP_CMP_GT);
+        CHECK(op_at(&prog, 8) == OP_OR);
+        CHECK(op_at(&prog, 10) == OP_NOT);
+        CHECK(op_at(&prog, 12) == OP_SHR);
+        CHECK(op_at(&prog, 15) == OP_LOR);
     }
     asm_program_free(&prog);
 
     const char *run_src = "PUSH 1071\nPUSH 462\nDIV\nPUSH 2\nMOD\nHALT\n";
     CHECK(asm_parse_string(&prog, run_src) == 0);
-    if (prog.count == 6u) {
+    if (prog.len > 0u) {
         VmState vm;
-        vm_init(&vm);
-        CHECK(vm_run(&vm, prog.insts, prog.count, 0) == VM_HALTED);
+        run_ok(&prog, &vm);
         CHECK(vm.sp == 1u && vm.stack[0] == 0);
         vm_free(&vm);
     }
@@ -153,19 +195,18 @@ static void test_extended_opcodes(void)
         "fn: HALT\n";
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, src) == 0);
-    if (prog.count == 40u) {
-        CHECK(prog.insts[0].op == OP_SWAP);
-        CHECK(prog.insts[11].op == OP_FREE);
-        CHECK(prog.insts[12].op == OP_CALL && prog.insts[12].arg == 39);
-        CHECK(prog.insts[15].op == OP_ENTER && prog.insts[15].arg == 2);
-        CHECK(prog.insts[16].op == OP_LOCAL_GET && prog.insts[16].arg == 0);
-        CHECK(prog.insts[17].op == OP_LOCAL_SET && prog.insts[17].arg == 1);
-        CHECK(prog.insts[19].op == OP_PUSHF);
-        CHECK(vm_bits_to_f64(prog.insts[19].arg) == 1.5);
-        CHECK(prog.insts[39].op == OP_HALT);
-    } else {
-        CHECK(prog.count == 40u);
-        fprintf(stderr, "  parse error: %s\n", prog.error);
+    CHECK(inst_count(&prog) == 40u);
+    if (prog.len > 0u) {
+        CHECK(op_at(&prog, 0) == OP_SWAP);
+        CHECK(op_at(&prog, 11) == OP_FREE);
+        CHECK(op_at(&prog, 12) == OP_CALL &&
+              arg_at(&prog, 12) == (int64_t)(VM_IMAGE_START + inst_offset(&prog, 39)));
+        CHECK(op_at(&prog, 15) == OP_ENTER && arg_at(&prog, 15) == 2);
+        CHECK(op_at(&prog, 16) == OP_LOCAL_GET && arg_at(&prog, 16) == 0);
+        CHECK(op_at(&prog, 17) == OP_LOCAL_SET && arg_at(&prog, 17) == 1);
+        CHECK(op_at(&prog, 19) == OP_PUSHF);
+        CHECK(vm_bits_to_f64(arg_at(&prog, 19)) == 1.5);
+        CHECK(op_at(&prog, 39) == OP_HALT);
     }
     asm_program_free(&prog);
 }
@@ -183,19 +224,17 @@ static void test_expressions_and_constants(void)
         "fn: HALT\n";
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, src) == 0);
-    if (prog.count == 6u) {
-        CHECK(prog.insts[0].arg == 16);
-        CHECK(prog.insts[1].arg == -7);
-        CHECK(prog.insts[2].arg == -1);
-        CHECK(prog.insts[3].op == OP_CALL && prog.insts[3].arg == 5);
+    CHECK(inst_count(&prog) == 6u);
+    if (prog.len > 0u) {
+        CHECK(arg_at(&prog, 0) == 16);
+        CHECK(arg_at(&prog, 1) == -7);
+        CHECK(arg_at(&prog, 2) == -1);
+        CHECK(op_at(&prog, 3) == OP_CALL &&
+              arg_at(&prog, 3) == (int64_t)(VM_IMAGE_START + inst_offset(&prog, 5)));
         VmState vm;
-        vm_init(&vm);
-        CHECK(vm_run(&vm, prog.insts, prog.count, 0) == VM_HALTED);
+        run_ok(&prog, &vm);
         CHECK(vm.sp == 3u && vm.stack[0] == 16 && vm.stack[1] == -7);
         vm_free(&vm);
-    } else {
-        CHECK(prog.count == 6u);
-        fprintf(stderr, "  parse error: %s\n", prog.error);
     }
     asm_program_free(&prog);
 }
@@ -204,21 +243,19 @@ static void test_pseudo_ops(void)
 {
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, "PUSH 5\nINC\nDEC\nNEG\nHALT\n") == 0);
-    if (prog.count == 9u) {
-        CHECK(prog.insts[1].op == OP_PUSH && prog.insts[1].arg == 1);
-        CHECK(prog.insts[2].op == OP_ADD);
-        CHECK(prog.insts[3].op == OP_PUSH && prog.insts[3].arg == 1);
-        CHECK(prog.insts[4].op == OP_SUB);
-        CHECK(prog.insts[5].op == OP_PUSH && prog.insts[5].arg == 0);
-        CHECK(prog.insts[6].op == OP_SWAP);
-        CHECK(prog.insts[7].op == OP_SUB);
+    CHECK(inst_count(&prog) == 9u);
+    if (prog.len > 0u) {
+        CHECK(op_at(&prog, 1) == OP_PUSH && arg_at(&prog, 1) == 1);
+        CHECK(op_at(&prog, 2) == OP_ADD);
+        CHECK(op_at(&prog, 3) == OP_PUSH && arg_at(&prog, 3) == 1);
+        CHECK(op_at(&prog, 4) == OP_SUB);
+        CHECK(op_at(&prog, 5) == OP_PUSH && arg_at(&prog, 5) == 0);
+        CHECK(op_at(&prog, 6) == OP_SWAP);
+        CHECK(op_at(&prog, 7) == OP_SUB);
         VmState vm;
-        vm_init(&vm);
-        CHECK(vm_run(&vm, prog.insts, prog.count, 0) == VM_HALTED);
+        run_ok(&prog, &vm);
         CHECK(vm.sp == 1u && vm.stack[0] == -5);
         vm_free(&vm);
-    } else {
-        CHECK(prog.count == 9u);
     }
     asm_program_free(&prog);
 }
@@ -233,34 +270,36 @@ static void test_data_directives(void)
         "HALT\n";
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, src) == 0);
-    /* 16 data bytes * 3 prologue instructions + 3 header + 1 HALT = 52. */
-    if (prog.count == 52u) {
-        CHECK(prog.insts[0].op == OP_PUSH && prog.insts[0].arg == 16);
-        CHECK(prog.insts[1].op == OP_ALLOC);
-        CHECK(prog.insts[2].op == OP_POP);
-        CHECK(prog.insts[3].op == OP_PUSH && prog.insts[3].arg == 1);
-        CHECK(prog.insts[4].op == OP_PUSH && prog.insts[4].arg == 0);
-        CHECK(prog.insts[5].op == OP_STORE8);
-        CHECK(prog.insts[51].op == OP_HALT);
+    /* 3-byte entry JMP + 16 data bytes + 1-byte HALT. */
+    CHECK(prog.len == 20u);
+    CHECK(inst_count(&prog) == 1u);
+    if (prog.len > 0u) {
+        const uint8_t *d = prog.bytes + 3u;
+        CHECK(d[0] == 1 && d[1] == 2 && d[2] == 0x41);
+        CHECK(d[3] == 'h' && d[4] == 'i' && d[5] == '\n');
+        CHECK(d[6] == 0 && d[7] == 0);
+        CHECK(d[8] == 0x01 && d[15] == 0xEF);
+        CHECK(op_at(&prog, 0) == OP_HALT);
 
         VmState vm;
-        vm_init(&vm);
-        CHECK(vm_run(&vm, prog.insts, prog.count, 0) == VM_HALTED);
-        CHECK(vm.hp == 16u && vm.sp == 0u);
-        CHECK(vm.heap[0] == 1 && vm.heap[1] == 2 && vm.heap[2] == 0x41);
-        CHECK(vm.heap[3] == 'h' && vm.heap[4] == 'i' && vm.heap[5] == '\n');
-        CHECK(vm.heap[6] == 0 && vm.heap[7] == 0);
-        CHECK(vm.heap[8] == 0x01 && vm.heap[15] == 0xEF);
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 0u && vm.hp == VM_HEAP_START); /* data stays in the image */
+        CHECK(vm.mem[VM_IMAGE_START + 3u] == 1);
+        CHECK(vm.mem[VM_IMAGE_START + 11u] == 0x01); /* DQ after ALIGN 8 */
         vm_free(&vm);
-    } else {
-        CHECK(prog.count == 52u);
-        fprintf(stderr, "  parse error: %s\n", prog.error);
     }
     asm_program_free(&prog);
 
-    /* A program with no data directives has no prologue: indices are unchanged. */
-    CHECK(asm_parse_string(&prog, "PUSH 1\nHALT\n") == 0);
-    CHECK(prog.count == 2u && prog.insts[0].op == OP_PUSH);
+    /* A data label resolves to its absolute byte address in the image. */
+    CHECK(asm_parse_string(&prog, "msg: STR \"hi\"\nPUSH msg\nLOAD16\nHALT\n") == 0);
+    if (prog.len > 0u) {
+        CHECK(op_at(&prog, 0) == OP_PUSH);
+        CHECK(arg_at(&prog, 0) == (int64_t)(VM_IMAGE_START + 3u));
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 1u && vm.stack[0] == 0x6869);
+        vm_free(&vm);
+    }
     asm_program_free(&prog);
 }
 
@@ -268,10 +307,11 @@ static void test_line_mapping(void)
 {
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, "PUSH 1\nPUSH 2\nADD\nHALT\n") == 0);
-    CHECK(prog.count == 4u);
-    CHECK(asm_line_of(&prog, 0) == 1u);
-    CHECK(asm_line_of(&prog, 2) == 3u);
-    CHECK(asm_line_of(&prog, 4) == 0u); /* out of range */
+    CHECK(inst_count(&prog) == 4u);
+    CHECK(asm_line_of(&prog, VM_IMAGE_START) == 1u); /* generated entry JMP */
+    CHECK(asm_line_of(&prog, VM_IMAGE_START + inst_offset(&prog, 0)) == 1u);
+    CHECK(asm_line_of(&prog, VM_IMAGE_START + inst_offset(&prog, 2)) == 3u);
+    CHECK(asm_line_of(&prog, VM_IMAGE_START + inst_offset(&prog, 4)) == 0u);
     asm_program_free(&prog);
 }
 
@@ -284,13 +324,14 @@ static void test_errors(void)
     expect_error("JMP nowhere\nHALT\n", 1, "undefined label");
     expect_error("L: HALT\nL: HALT\n", 2, "duplicate label");
     expect_error("bad-label: HALT\n", 1, "invalid label name");
-    expect_error("JMP 99\nHALT\n", 1, "out of range");
+    expect_error("JMP 70000\nHALT\n", 1, "out of range");
     expect_error("\n; only comments\n", 2, "no instructions");
     expect_error("STR hello\nHALT\n", 1, "quoted string");
     expect_error("EQU X 1\nEQU X 2\nHALT\n", 2, "duplicate constant");
     expect_error("SET -1\nHALT\n", 1, "invalid local index");
+    expect_error("ENTER 256\nHALT\n", 1, "invalid local index");
     expect_error("PUSHF abc\nHALT\n", 1, "invalid float");
-    expect_error("CALL 99\nHALT\n", 1, "out of range");
+    expect_error("CALL 70000\nHALT\n", 1, "out of range");
 
     AsmProgram prog;
     CHECK(asm_parse_file(&prog, "build/does_not_exist.asm") == -1);

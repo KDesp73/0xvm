@@ -18,29 +18,21 @@
 ; =============================================================================
 
 ; -----------------------------------------------------------------------------
-; Data section -- emitted into the heap at address 0 by an implicit prologue.
-; PRINT_STR appends its own newline, so labels contain no embedded newline.
+; Data section -- stored in the image region. Data labels are absolute byte
+; addresses. PRINT_STR appends its own newline, so labels contain no newline.
 ; -----------------------------------------------------------------------------
-    STR         "n="
-    STR         "min="
-    STR         "max="
-    STR         "sum="
-    STR         "mean="
-    STR         "var="
-    STR         "sd="
-    ALIGN       4                   ; 28 data bytes, so the heap starts at BASE
+s_n:        STR         "n="
+s_min:      STR         "min="
+s_max:      STR         "max="
+s_sum:      STR         "sum="
+s_mean:     STR         "mean="
+s_var:      STR         "var="
+s_sd:       STR         "sd="
+            ALIGN       4
 
 ; -----------------------------------------------------------------------------
-; String table: address and length of every label
+; String lengths
 ; -----------------------------------------------------------------------------
-    EQU         S_N         0
-    EQU         S_MIN       2
-    EQU         S_MAX       6
-    EQU         S_SUM       10
-    EQU         S_MEAN      14
-    EQU         S_VAR       19
-    EQU         S_SD        23
-
     EQU         SLEN_N      2
     EQU         SLEN_MIN    4
     EQU         SLEN_MAX    4
@@ -50,9 +42,10 @@
     EQU         SLEN_SD     3
 
 ; -----------------------------------------------------------------------------
-; Globals block: 64 bytes at BASE. Offsets below are relative to BASE.
+; Globals block: 64 bytes in the zero page at BASE. Offsets are relative to
+; BASE. The array itself is allocated on the heap (addresses start at 0x4000).
 ; -----------------------------------------------------------------------------
-    EQU         BASE        28
+    EQU         BASE        0
 
     EQU         O_N         0       ; i32   count, clamped to 1..1000
     EQU         O_ARR       4       ; i32   address of the array block
@@ -98,10 +91,7 @@ n_low_ok:
     PUSH        1000
 n_high_ok:
 
-; Allocate the globals block (its address is BASE) and store N.
-    PUSH        64
-    ALLOC
-    POP
+; Store N in the zero-page globals block.
     PUSH        BASE+O_N
     STORE32
 
@@ -333,14 +323,14 @@ stats_done:
 print_short:
     ENTER       0
 
-    PUSH        S_MEAN
+    PUSH        s_mean
     PUSH        SLEN_MEAN
     PRINT_STR
     PUSH        BASE+O_MEAN
     LOAD64
     FPRINT
 
-    PUSH        S_SD
+    PUSH        s_sd
     PUSH        SLEN_SD
     PRINT_STR
     PUSH        BASE+O_SD
@@ -356,49 +346,49 @@ print_short:
 print_full:
     ENTER       0
 
-    PUSH        S_N
+    PUSH        s_n
     PUSH        SLEN_N
     PRINT_STR
     PUSH        BASE+O_N
     LOAD32
     PRINT
 
-    PUSH        S_MIN
+    PUSH        s_min
     PUSH        SLEN_MIN
     PRINT_STR
     PUSH        BASE+O_MIN
     LOAD32
     PRINT
 
-    PUSH        S_MAX
+    PUSH        s_max
     PUSH        SLEN_MAX
     PRINT_STR
     PUSH        BASE+O_MAX
     LOAD32
     PRINT
 
-    PUSH        S_SUM
+    PUSH        s_sum
     PUSH        SLEN_SUM
     PRINT_STR
     PUSH        BASE+O_SUM
     LOAD64
     PRINT
 
-    PUSH        S_MEAN
+    PUSH        s_mean
     PUSH        SLEN_MEAN
     PRINT_STR
     PUSH        BASE+O_MEAN
     LOAD64
     FPRINT
 
-    PUSH        S_VAR
+    PUSH        s_var
     PUSH        SLEN_VAR
     PRINT_STR
     PUSH        BASE+O_VAR
     LOAD64
     FPRINT
 
-    PUSH        S_SD
+    PUSH        s_sd
     PUSH        SLEN_SD
     PRINT_STR
     PUSH        BASE+O_SD

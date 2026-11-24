@@ -8,7 +8,6 @@
 
 static int failures;
 
-#define NELEMS(a) (sizeof(a) / sizeof((a)[0]))
 #define CHECK(cond) do {                                                        \
         if (!(cond)) {                                                          \
             fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
@@ -16,36 +15,103 @@ static int failures;
         }                                                                       \
     } while (0)
 
+#define MAX_INSTS 512
+#define ADR(p, i) ((uint16_t)(VM_IMAGE_START + (p).offsets[i]))
+
+typedef struct {
+    uint8_t bytes[VM_IMAGE_MAX];
+    size_t len;
+    uint16_t offsets[MAX_INSTS];
+    size_t count;
+} Prog;
+
+static void put_be(uint8_t *p, uint64_t v, unsigned width)
+{
+    for (unsigned i = 0; i < width; i++) {
+        p[width - 1u - i] = (uint8_t)(v & 0xFFu);
+        v >>= 8;
+    }
+}
+
+static void p_reset(Prog *p)
+{
+    memset(p, 0, sizeof(*p));
+}
+
+static uint16_t emit_raw(Prog *p, uint8_t op)
+{
+    uint16_t addr = (uint16_t)(VM_IMAGE_START + p->len);
+    if (p->count < MAX_INSTS) p->offsets[p->count] = (uint16_t)p->len;
+    p->count++;
+    p->bytes[p->len++] = op;
+    return addr;
+}
+
+static uint16_t emit0(Prog *p, VmOpcode op)
+{
+    return emit_raw(p, (uint8_t)op);
+}
+
+static uint16_t emit1(Prog *p, VmOpcode op, uint8_t arg)
+{
+    uint16_t addr = emit_raw(p, (uint8_t)op);
+    p->bytes[p->len++] = arg;
+    return addr;
+}
+
+static uint16_t emit2(Prog *p, VmOpcode op, uint16_t arg)
+{
+    uint16_t addr = emit_raw(p, (uint8_t)op);
+    put_be(p->bytes + p->len, arg, 2u);
+    p->len += 2u;
+    return addr;
+}
+
+static uint16_t emit8(Prog *p, VmOpcode op, int64_t arg)
+{
+    uint16_t addr = emit_raw(p, (uint8_t)op);
+    put_be(p->bytes + p->len, (uint64_t)arg, 8u);
+    p->len += 8u;
+    return addr;
+}
+
+static void patch2(Prog *p, size_t index, uint16_t target)
+{
+    put_be(p->bytes + p->offsets[index] + 1u, target, 2u);
+}
+
+static void patch8(Prog *p, size_t index, uint16_t target)
+{
+    put_be(p->bytes + p->offsets[index] + 1u, target, 8u);
+}
+
+static void load(VmState *vm, const Prog *p)
+{
+    CHECK(vm_load_image(vm, p->bytes, p->len, VM_IMAGE_START) == VM_OK);
+}
+
 static int same_state(const VmState *a, const VmState *b)
 {
-    if (a->ip != b->ip || a->sp != b->sp || a->fp != b->fp ||
-        a->hp != b->hp || a->ticks != b->ticks ||
-        a->fsp != b->fsp || a->block_count != b->block_count) return 0;
-    if (a->sp > 0u && memcmp(a->stack, b->stack, (size_t)a->sp * sizeof(int64_t)) != 0) return 0;
-    if (a->fsp > 0u && memcmp(a->frames, b->frames, (size_t)a->fsp * sizeof(VmFrame)) != 0) return 0;
-    if (a->block_count > 0u &&
-        memcmp(a->blocks, b->blocks, (size_t)a->block_count * sizeof(VmBlock)) != 0) return 0;
-    if (a->hp == 0u) return 1;
-    if (!a->heap || !b->heap) return 0;
-    return memcmp(a->heap, b->heap, (size_t)a->hp) == 0;
+    return memcmp(a, b, sizeof(*a)) == 0;
 }
 
-static int32_t heap_i32(const VmState *vm, uint64_t addr)
+static void step_to(VmState *vm, const Prog *p, uint16_t addr)
 {
-    const uint8_t *p = vm->heap + addr;
-    return (int32_t)(((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
-                     ((uint32_t)p[2] << 8) | (uint32_t)p[3]);
-}
-
-/* Run a snippet's setup instructions, then assert the last one fails atomically. */
-static void expect_error(VmState *vm, const VmInst *p, size_t n, VmStatus want)
-{
-    vm->ip = 0u;
-    for (size_t i = 0; i + 1u < n; i++) {
-        CHECK(vm_step(vm, p, n) == VM_OK);
+    for (size_t i = 0; i <= p->count + 8u; i++) {
+        if (vm->ip == addr) return;
+        VmStatus st = vm_step(vm);
+        if (st != VM_OK) { CHECK(st == VM_OK); return; }
     }
+    CHECK(0 /* never reached fail instruction */);
+}
+
+/* Run the setup instructions, then assert the target instruction fails atomically. */
+static void expect_error(VmState *vm, const Prog *p, uint16_t fail_addr, VmStatus want)
+{
+    load(vm, p);
+    step_to(vm, p, fail_addr);
     VmState before = *vm;
-    CHECK(vm_step(vm, p, n) == want);
+    CHECK(vm_step(vm) == want);
     CHECK(same_state(vm, &before));
 }
 
@@ -53,21 +119,29 @@ static void test_stack_ops(void)
 {
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSH, 7}, {OP_DUP, 0}, {OP_ADD, 0},
-        {OP_PUSH, -3}, {OP_POP, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 7);
+    emit0(&p, OP_DUP);
+    emit0(&p, OP_ADD);
+    emit8(&p, OP_PUSH, -3);
+    emit0(&p, OP_POP);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == 14);
 
     /* Underflow must not consume state. */
     vm_init(&vm);
-    const VmInst bad[] = {{OP_POP, 0}};
-    expect_error(&vm, bad, NELEMS(bad), VM_ERR_STACK_UNDERFLOW);
-    CHECK(vm.sp == 0u && vm.ticks == 0u && vm.ip == 0u);
+    p_reset(&p);
+    uint16_t bad = emit0(&p, OP_POP);
+    expect_error(&vm, &p, bad, VM_ERR_STACK_UNDERFLOW);
+    CHECK(vm.sp == 0u && vm.ticks == 0u && vm.ip == VM_IMAGE_START);
 
-    const VmInst one[] = {{OP_PUSH, 1}, {OP_ADD, 0}};
-    expect_error(&vm, one, NELEMS(one), VM_ERR_STACK_UNDERFLOW);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 1);
+    uint16_t add = emit0(&p, OP_ADD);
+    expect_error(&vm, &p, add, VM_ERR_STACK_UNDERFLOW);
     vm_free(&vm);
 }
 
@@ -75,22 +149,29 @@ static void test_stack_shuffling(void)
 {
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSH, 1}, {OP_PUSH, 2}, {OP_SWAP, 0},
-        {OP_PUSH, 3}, {OP_OVER, 0}, {OP_ROT, 0},
-        {OP_PUSH, 1}, {OP_PICK, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
-    /* [1,2] -> swap [2,1] -> push3 [2,1,3] -> over [2,1,3,1]
-     * -> rot [2,3,1,1] -> push1 [2,3,1,1,1] -> pick(1) [2,3,1,1,1]
-     * (PICK replaces n with the picked value, so sp stays at 5). */
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 1);
+    emit8(&p, OP_PUSH, 2);
+    emit0(&p, OP_SWAP);
+    emit8(&p, OP_PUSH, 3);
+    emit0(&p, OP_OVER);
+    emit0(&p, OP_ROT);
+    emit8(&p, OP_PUSH, 1);
+    emit0(&p, OP_PICK);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 5u);
     CHECK(vm.stack[0] == 2 && vm.stack[1] == 3 && vm.stack[2] == 1);
     CHECK(vm.stack[3] == 1 && vm.stack[4] == 1);
     vm_free(&vm);
 
-    const VmInst bad_pick[] = {{OP_PUSH, 1}, {OP_PUSH, 5}, {OP_PICK, 0}};
-    expect_error(&vm, bad_pick, NELEMS(bad_pick), VM_ERR_BAD_ADDR);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 1);
+    emit8(&p, OP_PUSH, 5);
+    uint16_t pick = emit0(&p, OP_PICK);
+    expect_error(&vm, &p, pick, VM_ERR_BAD_ADDR);
     vm_free(&vm);
 }
 
@@ -98,8 +179,14 @@ static void check_binary(VmOpcode op, int64_t x, int64_t y, int64_t want)
 {
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {{OP_PUSH, x}, {OP_PUSH, y}, {(uint8_t)op, 0}, {OP_HALT, 0}};
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, x);
+    emit8(&p, OP_PUSH, y);
+    emit0(&p, op);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == want);
     vm_free(&vm);
 }
@@ -112,7 +199,7 @@ static void test_arithmetic(void)
     check_binary(OP_CMP_LT, 3, 4, 1);
     check_binary(OP_CMP_LT, 4, 3, 0);
     check_binary(OP_CMP_LT, 3, 3, 0);
-    check_binary(OP_ADD, INT64_MAX, 1, INT64_MIN); /* wrap without UB */
+    check_binary(OP_ADD, INT64_MAX, 1, INT64_MIN);
     check_binary(OP_MUL, INT64_MAX, 2, -2);
 }
 
@@ -120,8 +207,13 @@ static void check_unary(VmOpcode op, int64_t x, int64_t want)
 {
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {{OP_PUSH, x}, {(uint8_t)op, 0}, {OP_HALT, 0}};
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, x);
+    emit0(&p, op);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == want);
     vm_free(&vm);
 }
@@ -141,13 +233,20 @@ static void test_div_mod(void)
 
     VmState vm;
     vm_init(&vm);
-    const VmInst div0[] = {{OP_PUSH, 10}, {OP_PUSH, 0}, {OP_DIV, 0}};
-    expect_error(&vm, div0, NELEMS(div0), VM_ERR_DIV_ZERO);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 10);
+    emit8(&p, OP_PUSH, 0);
+    uint16_t div0 = emit0(&p, OP_DIV);
+    expect_error(&vm, &p, div0, VM_ERR_DIV_ZERO);
     CHECK(vm.sp == 2u && vm.stack[0] == 10 && vm.stack[1] == 0);
-    CHECK(vm.ip == 2u && vm.ticks == 2u);
+    CHECK(vm.ip == div0 && vm.ticks == 2u);
 
-    const VmInst mod0[] = {{OP_PUSH, 10}, {OP_PUSH, 0}, {OP_MOD, 0}};
-    expect_error(&vm, mod0, NELEMS(mod0), VM_ERR_DIV_ZERO);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 10);
+    emit8(&p, OP_PUSH, 0);
+    uint16_t mod0 = emit0(&p, OP_MOD);
+    expect_error(&vm, &p, mod0, VM_ERR_DIV_ZERO);
     vm_free(&vm);
 }
 
@@ -158,14 +257,12 @@ static void test_bitwise(void)
     check_binary(OP_XOR, 0xF0F0, 0x3C3C, 0xCCCC);
     check_binary(OP_AND, -1, 0x1234, 0x1234);
     check_binary(OP_XOR, -1, -1, 0);
-
     check_binary(OP_SHL, 1, 4, 16);
     check_binary(OP_SHL, 1, 64, 1);
     check_binary(OP_SHL, 1, 65, 2);
     check_binary(OP_SHL, INT64_MIN, 1, 0);
     check_binary(OP_SHR, -1, 1, INT64_MAX);
     check_binary(OP_SHR, INT64_MIN, 63, 1);
-
     check_unary(OP_NOT, 0, -1);
     check_unary(OP_NOT, -1, 0);
     check_unary(OP_NOT, 0x0F, ~0x0F);
@@ -183,7 +280,6 @@ static void test_comparisons_and_logic(void)
     check_binary(OP_CMP_GT, 3, 3, 0);
     check_binary(OP_CMP_GE, 3, 3, 1);
     check_binary(OP_CMP_GE, 2, 3, 0);
-
     check_binary(OP_LAND, 5, 7, 1);
     check_binary(OP_LAND, 5, 0, 0);
     check_binary(OP_LOR, 0, 7, 1);
@@ -195,95 +291,152 @@ static void test_comparisons_and_logic(void)
 
     VmState vm;
     vm_init(&vm);
-    const VmInst under[] = {{OP_PUSH, 1}, {OP_XOR, 0}};
-    expect_error(&vm, under, NELEMS(under), VM_ERR_STACK_UNDERFLOW);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 1);
+    uint16_t xor = emit0(&p, OP_XOR);
+    expect_error(&vm, &p, xor, VM_ERR_STACK_UNDERFLOW);
     CHECK(vm.sp == 1u && vm.stack[0] == 1);
     vm_free(&vm);
 }
 
 static void test_jumps(void)
 {
-    const VmInst taken[] = {
-        {OP_PUSH, 1}, {OP_JMP_Z, 4}, {OP_PUSH, 10}, {OP_HALT, 0},
-        {OP_PUSH, 20}, {OP_HALT, 0}
-    };
-    const VmInst not_taken[] = {
-        {OP_PUSH, 0}, {OP_JMP_Z, 4}, {OP_PUSH, 10}, {OP_HALT, 0},
-        {OP_PUSH, 20}, {OP_HALT, 0}
-    };
-    const VmInst jmp[] = {
-        {OP_PUSH, 0}, {OP_JMP, 3}, {OP_PUSH, 99}, {OP_PUSH, 42}, {OP_HALT, 0}
-    };
-    const VmInst indirect[] = {
-        {OP_PUSH, 3}, {OP_JMP_I, 0}, {OP_PUSH, 99}, {OP_PUSH, 42}, {OP_HALT, 0}
-    };
     VmState vm;
-
     vm_init(&vm);
-    CHECK(vm_run(&vm, taken, NELEMS(taken), 0) == VM_HALTED);
+    Prog p;
+
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 1);
+    uint16_t jz1 = emit2(&p, OP_JMP_Z, 0);
+    emit8(&p, OP_PUSH, 10);
+    emit0(&p, OP_HALT);
+    emit8(&p, OP_PUSH, 20);
+    emit0(&p, OP_HALT);
+    patch2(&p, 1, ADR(p, 4));
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == 10);
+    (void)jz1;
 
-    vm_init(&vm);
-    CHECK(vm_run(&vm, not_taken, NELEMS(not_taken), 0) == VM_HALTED);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 0);
+    emit2(&p, OP_JMP_Z, 0);
+    emit8(&p, OP_PUSH, 10);
+    emit0(&p, OP_HALT);
+    emit8(&p, OP_PUSH, 20);
+    emit0(&p, OP_HALT);
+    patch2(&p, 1, ADR(p, 4));
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == 20);
 
-    vm_init(&vm);
-    CHECK(vm_run(&vm, jmp, NELEMS(jmp), 0) == VM_HALTED);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 0);
+    emit2(&p, OP_JMP, 0);
+    emit8(&p, OP_PUSH, 99);
+    emit8(&p, OP_PUSH, 42);
+    emit0(&p, OP_HALT);
+    patch2(&p, 1, ADR(p, 3));
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 2u && vm.stack[0] == 0 && vm.stack[1] == 42);
 
-    vm_init(&vm);
-    CHECK(vm_run(&vm, indirect, NELEMS(indirect), 0) == VM_HALTED);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 0); /* patched to target */
+    emit0(&p, OP_JMP_I);
+    emit8(&p, OP_PUSH, 99);
+    emit8(&p, OP_PUSH, 42);
+    emit0(&p, OP_HALT);
+    patch8(&p, 0, ADR(p, 3));
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == 42);
 
-    const VmInst bad_indirect[] = {{OP_PUSH, 99}, {OP_JMP_I, 0}};
-    expect_error(&vm, bad_indirect, NELEMS(bad_indirect), VM_ERR_BAD_IP);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 70000);
+    uint16_t bad = emit0(&p, OP_JMP_I);
+    expect_error(&vm, &p, bad, VM_ERR_BAD_IP);
     vm_free(&vm);
 }
 
 static void test_store_load(void)
 {
+    const uint16_t base = VM_HEAP_START;
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSH, 12}, {OP_ALLOC, 0}, {OP_POP, 0},
-        {OP_PUSH, 0x01020304}, {OP_PUSH, 8}, {OP_STORE32, 0},
-        {OP_PUSH, 8}, {OP_LOAD32, 0},
-        {OP_PUSH, 7}, {OP_PUSH, 0}, {OP_STORE32, 0},
-        {OP_PUSH, 0}, {OP_LOAD32, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 12);
+    emit0(&p, OP_ALLOC);
+    emit0(&p, OP_POP);
+    emit8(&p, OP_PUSH, 0x01020304);
+    emit8(&p, OP_PUSH, base + 8u);
+    emit0(&p, OP_STORE32);
+    emit8(&p, OP_PUSH, base + 8u);
+    emit0(&p, OP_LOAD32);
+    emit8(&p, OP_PUSH, 7);
+    emit8(&p, OP_PUSH, base);
+    emit0(&p, OP_STORE32);
+    emit8(&p, OP_PUSH, base);
+    emit0(&p, OP_LOAD32);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 2u && vm.stack[0] == 0x01020304 && vm.stack[1] == 7);
-    CHECK(vm.heap[8] == 1 && vm.heap[9] == 2 && vm.heap[10] == 3 && vm.heap[11] == 4);
+    CHECK(vm.mem[base + 8u] == 1 && vm.mem[base + 9u] == 2);
+    CHECK(vm.mem[base + 10u] == 3 && vm.mem[base + 11u] == 4);
     vm_free(&vm);
 }
 
 static void test_memory_widths(void)
 {
+    const uint16_t base = VM_HEAP_START;
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSH, 24}, {OP_ALLOC, 0}, {OP_POP, 0},
-        {OP_PUSH, 0xAB},          {OP_PUSH, 1},  {OP_STORE8, 0},
-        {OP_PUSH, 0x1234},        {OP_PUSH, 4},  {OP_STORE16, 0},
-        {OP_PUSH, (int64_t)(uint32_t)0xFEDCBA98}, {OP_PUSH, 8},  {OP_STORE32, 0},
-        {OP_PUSH, 0x0123456789ABCDEF}, {OP_PUSH, 12}, {OP_STORE64, 0},
-        {OP_PUSH, 1},  {OP_LOAD8, 0},
-        {OP_PUSH, 4},  {OP_LOAD16, 0},
-        {OP_PUSH, 8},  {OP_LOAD32U, 0},
-        {OP_PUSH, 8},  {OP_LOAD32, 0},
-        {OP_PUSH, 12}, {OP_LOAD64, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 24);
+    emit0(&p, OP_ALLOC);
+    emit0(&p, OP_POP);
+    emit8(&p, OP_PUSH, 0xAB);          emit8(&p, OP_PUSH, base + 1u);  emit0(&p, OP_STORE8);
+    emit8(&p, OP_PUSH, 0x1234);        emit8(&p, OP_PUSH, base + 4u);  emit0(&p, OP_STORE16);
+    emit8(&p, OP_PUSH, (int64_t)(uint32_t)0xFEDCBA98); emit8(&p, OP_PUSH, base + 8u); emit0(&p, OP_STORE32);
+    emit8(&p, OP_PUSH, 0x0123456789ABCDEF); emit8(&p, OP_PUSH, base + 12u); emit0(&p, OP_STORE64);
+    emit8(&p, OP_PUSH, base + 1u);  emit0(&p, OP_LOAD8);
+    emit8(&p, OP_PUSH, base + 4u);  emit0(&p, OP_LOAD16);
+    emit8(&p, OP_PUSH, base + 8u);  emit0(&p, OP_LOAD32U);
+    emit8(&p, OP_PUSH, base + 8u);  emit0(&p, OP_LOAD32);
+    emit8(&p, OP_PUSH, base + 12u); emit0(&p, OP_LOAD64);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 5u);
     CHECK(vm.stack[0] == 0xAB);
     CHECK(vm.stack[1] == 0x1234);
-    CHECK(vm.stack[2] == 0xFEDCBA98u); /* zero extended uint32 */
-    CHECK(vm.stack[3] == (int64_t)(int32_t)0xFEDCBA98u); /* sign extended */
+    CHECK(vm.stack[2] == 0xFEDCBA98u);
+    CHECK(vm.stack[3] == (int64_t)(int32_t)0xFEDCBA98u);
     CHECK(vm.stack[4] == 0x0123456789ABCDEF);
     vm_free(&vm);
 
-    const VmInst oob[] = {{OP_PUSH, 0}, {OP_PUSH, 4}, {OP_STORE8, 0}}; /* no heap yet */
-    expect_error(&vm, oob, NELEMS(oob), VM_ERR_BAD_ADDR);
+    /* Static data in the image region is directly addressable. */
+    vm_init(&vm);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 0x1234);
+    emit8(&p, OP_PUSH, VM_IMAGE_START + 3u);
+    emit0(&p, OP_STORE16);
+    emit8(&p, OP_PUSH, VM_IMAGE_START + 3u);
+    emit0(&p, OP_LOAD16);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
+    CHECK(vm.sp == 1u && vm.stack[0] == 0x1234);
+    vm_free(&vm);
+
+    p_reset(&p);
+    emit8(&p, OP_PUSH, VM_RAM_SIZE - 1);
+    uint16_t oob = emit0(&p, OP_LOAD32);
+    expect_error(&vm, &p, oob, VM_ERR_BAD_ADDR);
     vm_free(&vm);
 }
 
@@ -291,57 +444,82 @@ static void test_alloc_and_heap_bounds(void)
 {
     VmState vm;
     vm_init(&vm);
-
-    const VmInst alloc[] = {
-        {OP_PUSH, 1}, {OP_ALLOC, 0}, {OP_PUSH, 5}, {OP_ALLOC, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, alloc, NELEMS(alloc), 0) == VM_HALTED);
-    CHECK(vm.hp == 12u && vm.stack[0] == 0 && vm.stack[1] == 4);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 1);
+    emit0(&p, OP_ALLOC);
+    emit8(&p, OP_PUSH, 5);
+    emit0(&p, OP_ALLOC);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
+    CHECK(vm.hp == VM_HEAP_START + 16u);
+    CHECK(vm.stack[0] == VM_HEAP_START && vm.stack[1] == VM_HEAP_START + 8u);
     CHECK(vm.block_count == 2u && vm.blocks[0].live && vm.blocks[1].live);
 
-    const VmInst oob[] = {{OP_PUSH, 12}, {OP_LOAD32, 0}};
-    expect_error(&vm, oob, NELEMS(oob), VM_ERR_BAD_ADDR);
-    const VmInst store_oob[] = {{OP_PUSH, 99}, {OP_PUSH, 12}, {OP_STORE32, 0}};
-    expect_error(&vm, store_oob, NELEMS(store_oob), VM_ERR_BAD_ADDR);
-    const VmInst negative[] = {{OP_PUSH, -1}, {OP_LOAD32, 0}};
-    expect_error(&vm, negative, NELEMS(negative), VM_ERR_BAD_ADDR);
-    const VmInst bad_size[] = {{OP_PUSH, 0}, {OP_ALLOC, 0}};
-    expect_error(&vm, bad_size, NELEMS(bad_size), VM_ERR_BAD_ADDR);
+    /* Loads/stores address all RAM, so only the RAM boundary is out of range. */
+    p_reset(&p);
+    emit8(&p, OP_PUSH, VM_RAM_SIZE - 2u);
+    uint16_t oob = emit0(&p, OP_LOAD32);
+    expect_error(&vm, &p, oob, VM_ERR_BAD_ADDR);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 99);
+    emit8(&p, OP_PUSH, VM_RAM_SIZE - 2u);
+    uint16_t store_oob = emit0(&p, OP_STORE32);
+    expect_error(&vm, &p, store_oob, VM_ERR_BAD_ADDR);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, -1);
+    uint16_t negative = emit0(&p, OP_LOAD32);
+    expect_error(&vm, &p, negative, VM_ERR_BAD_ADDR);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 0);
+    uint16_t bad_size = emit0(&p, OP_ALLOC);
+    expect_error(&vm, &p, bad_size, VM_ERR_BAD_ADDR);
     vm_free(&vm);
 
     VmState big;
     vm_init(&big);
-    const VmInst grow[] = {
-        {OP_PUSH, 8192}, {OP_ALLOC, 0}, {OP_POP, 0},
-        {OP_PUSH, 12345}, {OP_PUSH, 8188}, {OP_STORE32, 0},
-        {OP_PUSH, 8188}, {OP_LOAD32, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&big, grow, NELEMS(grow), 0) == VM_HALTED);
-    CHECK(big.hp == 8192u && big.heap_cap >= big.hp);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 8192);
+    emit0(&p, OP_ALLOC);
+    emit0(&p, OP_POP);
+    emit8(&p, OP_PUSH, 12345);
+    emit8(&p, OP_PUSH, VM_HEAP_START + 8184u);
+    emit0(&p, OP_STORE32);
+    emit8(&p, OP_PUSH, VM_HEAP_START + 8184u);
+    emit0(&p, OP_LOAD32);
+    emit0(&p, OP_HALT);
+    load(&big, &p);
+    CHECK(vm_run(&big, 0) == VM_HALTED);
+    CHECK(big.hp == VM_HEAP_START + 8192u);
     CHECK(big.sp == 1u && big.stack[0] == 12345);
     vm_free(&big);
 }
 
 static void test_heap_reuse(void)
 {
+    const uint16_t base = VM_HEAP_START;
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSH, 8}, {OP_ALLOC, 0}, {OP_POP, 0}, /* addr 0 */
-        {OP_PUSH, 8}, {OP_ALLOC, 0}, {OP_POP, 0}, /* addr 8 */
-        {OP_PUSH, 8}, {OP_FREE, 0},
-        {OP_PUSH, 4}, {OP_ALLOC, 0}, /* reuses addr 8 */
-        {OP_PUSH, 4}, {OP_ALLOC, 0}, /* reuses addr 12 from the split */
-        {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
-    CHECK(vm.hp == 16u);
-    CHECK(vm.sp == 2u && vm.stack[0] == 8 && vm.stack[1] == 12);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 8); emit0(&p, OP_ALLOC); emit0(&p, OP_POP);  /* base */
+    emit8(&p, OP_PUSH, 16); emit0(&p, OP_ALLOC); emit0(&p, OP_POP); /* base+8 */
+    emit8(&p, OP_PUSH, base + 8u); emit0(&p, OP_FREE);
+    emit8(&p, OP_PUSH, 8); emit0(&p, OP_ALLOC); /* reuses base+8 */
+    emit8(&p, OP_PUSH, 8); emit0(&p, OP_ALLOC); /* reuses split: base+16 */
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
+    CHECK(vm.hp == base + 24u);
+    CHECK(vm.sp == 2u && vm.stack[0] == base + 8u && vm.stack[1] == base + 16u);
     CHECK(vm.block_count == 3u);
     CHECK(vm.blocks[0].live && vm.blocks[1].live && vm.blocks[2].live);
 
-    const VmInst bad_free[] = {{OP_PUSH, 99}, {OP_FREE, 0}};
-    expect_error(&vm, bad_free, NELEMS(bad_free), VM_ERR_BAD_ADDR);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 99);
+    uint16_t bad_free = emit0(&p, OP_FREE);
+    expect_error(&vm, &p, bad_free, VM_ERR_BAD_ADDR);
     vm_free(&vm);
 }
 
@@ -349,35 +527,52 @@ static void test_calls_and_locals(void)
 {
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSH, 10}, {OP_CALL, 7}, {OP_SWAP, 0}, {OP_ADD, 0}, {OP_HALT, 0},
-        {OP_NOP, 0}, {OP_NOP, 0},
-        /* 7: function */
-        {OP_ENTER, 1},       /* 7 */
-        {OP_LOCAL_GET, 0},   /* 8 */
-        {OP_PUSH, 5},        /* 9 */
-        {OP_ADD, 0},         /* 10 */
-        {OP_LOCAL_SET, 0},   /* 11 */
-        {OP_LOCAL_GET, 0},   /* 12 */
-        {OP_RET, 0}          /* 13 */
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 10);
+    uint16_t call = emit2(&p, OP_CALL, 0);
+    emit0(&p, OP_SWAP);
+    emit0(&p, OP_ADD);
+    emit0(&p, OP_HALT);
+    emit0(&p, OP_NOP);
+    emit0(&p, OP_NOP);
+    emit1(&p, OP_ENTER, 1);
+    emit1(&p, OP_LOCAL_GET, 0);
+    emit8(&p, OP_PUSH, 5);
+    emit0(&p, OP_ADD);
+    emit1(&p, OP_LOCAL_SET, 0);
+    emit1(&p, OP_LOCAL_GET, 0);
+    emit0(&p, OP_RET);
+    patch2(&p, 1, ADR(p, 7));
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == 15);
     CHECK(vm.fsp == 0u && vm.fp == 0u);
+    (void)call;
 
-    /* Indirect call through a value on the stack. */
     vm_init(&vm);
-    const VmInst ind[] = {
-        {OP_PUSH, 10}, {OP_PUSH, 8}, {OP_CALL_I, 0}, {OP_SWAP, 0}, {OP_ADD, 0}, {OP_HALT, 0},
-        {OP_NOP, 0}, {OP_NOP, 0},
-        {OP_ENTER, 1}, {OP_PUSH, 42}, {OP_LOCAL_SET, 0},
-        {OP_LOCAL_GET, 0}, {OP_RET, 0}
-    };
-    CHECK(vm_run(&vm, ind, NELEMS(ind), 0) == VM_HALTED);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 10);
+    emit8(&p, OP_PUSH, 0); /* patched to function */
+    emit0(&p, OP_CALL_I);
+    emit0(&p, OP_SWAP);
+    emit0(&p, OP_ADD);
+    emit0(&p, OP_HALT);
+    emit0(&p, OP_NOP);
+    emit0(&p, OP_NOP);
+    emit1(&p, OP_ENTER, 1);
+    emit8(&p, OP_PUSH, 42);
+    emit1(&p, OP_LOCAL_SET, 0);
+    emit1(&p, OP_LOCAL_GET, 0);
+    emit0(&p, OP_RET);
+    patch8(&p, 1, ADR(p, 8));
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm.stack[0] == 52);
 
-    const VmInst bad_ret[] = {{OP_RET, 0}};
-    expect_error(&vm, bad_ret, NELEMS(bad_ret), VM_ERR_BAD_FRAME);
+    p_reset(&p);
+    uint16_t bad_ret = emit0(&p, OP_RET);
+    expect_error(&vm, &p, bad_ret, VM_ERR_BAD_FRAME);
     vm_free(&vm);
 }
 
@@ -385,15 +580,16 @@ static void test_floats(void)
 {
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSHF, vm_f64_to_bits(1.5)},
-        {OP_PUSHF, vm_f64_to_bits(2.0)},
-        {OP_FADD, 0},                 /* 1.5 + 2.0 = 3.5 */
-        {OP_PUSHF, vm_f64_to_bits(2.0)},
-        {OP_FMUL, 0},                 /* 3.5 * 2.0 = 7 */
-        {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSHF, vm_f64_to_bits(1.5));
+    emit8(&p, OP_PUSHF, vm_f64_to_bits(2.0));
+    emit0(&p, OP_FADD);
+    emit8(&p, OP_PUSHF, vm_f64_to_bits(2.0));
+    emit0(&p, OP_FMUL);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
     CHECK(vm.sp == 1u && vm_bits_to_f64(vm.stack[0]) == 7.0);
     vm_free(&vm);
 
@@ -410,24 +606,32 @@ static void test_error_atomicity(void)
 {
     VmState vm;
     vm_init(&vm);
+    Prog p;
 
-    const VmInst bad_target[] = {{OP_PUSH, 0}, {OP_JMP_Z, 999}};
-    expect_error(&vm, bad_target, NELEMS(bad_target), VM_ERR_BAD_IP);
-    const VmInst bad_op[] = {{255, 0}};
-    expect_error(&vm, bad_op, NELEMS(bad_op), VM_ERR_BAD_OP);
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 70000);
+    uint16_t bad_target = emit0(&p, OP_JMP_I);
+    expect_error(&vm, &p, bad_target, VM_ERR_BAD_IP);
+
+    p_reset(&p);
+    emit_raw(&p, 255);
+    uint16_t bad_op = ADR(p, 0);
+    expect_error(&vm, &p, bad_op, VM_ERR_BAD_OP);
+
     VmState before = vm;
-    CHECK(vm_step(&vm, bad_target, 0) == VM_ERR_BAD_IP);
+    CHECK(vm_load_image(&vm, p.bytes, p.len, 0) == VM_ERR_BAD_IP);
     CHECK(same_state(&vm, &before));
     vm_free(&vm);
 
-    /* The operand stack grows past the old fixed 256-slot ceiling. */
+    /* The operand stack is fixed at 256 cells and refuses further pushes. */
     VmState packed;
     vm_init(&packed);
-    VmInst fills[600];
-    for (size_t i = 0; i < NELEMS(fills); i++) fills[i] = (VmInst){OP_PUSH, (int64_t)i};
-    CHECK(vm_run(&packed, fills, NELEMS(fills), (uint32_t)NELEMS(fills)) == VM_OK);
-    CHECK(packed.sp == 600u && packed.stack_cap >= 600u);
-    CHECK(packed.stack[599] == 599);
+    p_reset(&p);
+    for (size_t i = 0; i < 300u; i++) emit8(&p, OP_PUSH, (int64_t)i);
+    load(&packed, &p);
+    CHECK(vm_run(&packed, 300u) == VM_ERR_STACK_OVERFLOW);
+    CHECK(packed.sp == VM_STACK_SIZE);
+    CHECK(packed.stack[VM_STACK_SIZE - 1u] == (int64_t)(VM_STACK_SIZE - 1u));
     vm_free(&packed);
 }
 
@@ -436,34 +640,68 @@ static void test_io(void)
     /* Keep stdout quiet: only exercise the opcodes' state transitions. */
     VmState vm;
     vm_init(&vm);
-    const VmInst p[] = {
-        {OP_PUSH, 4}, {OP_ALLOC, 0}, {OP_POP, 0},
-        {OP_PUSH, 65}, {OP_PUSH, 0}, {OP_STORE8, 0},
-        {OP_PUSH, 1}, {OP_PUSH, 0}, {OP_PRINT_STR, 0},
-        {OP_PUSH, 66}, {OP_PRINT_CHAR, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
-    CHECK(vm.sp == 0u && vm.hp == 4u && vm.heap[0] == 65);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 4);
+    emit0(&p, OP_ALLOC);
+    emit0(&p, OP_POP);
+    emit8(&p, OP_PUSH, 65);
+    emit8(&p, OP_PUSH, VM_HEAP_START);
+    emit0(&p, OP_STORE8);
+    emit8(&p, OP_PUSH, VM_HEAP_START);
+    emit8(&p, OP_PUSH, 1);
+    emit0(&p, OP_PRINT_STR);
+    emit8(&p, OP_PUSH, 66);
+    emit0(&p, OP_PRINT_CHAR);
+    emit0(&p, OP_HALT);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
+    CHECK(vm.sp == 0u && vm.hp == VM_HEAP_START + 8u);
+    CHECK(vm.mem[VM_HEAP_START] == 65);
     vm_free(&vm);
 }
 
 static void test_demo_control_flow(void)
 {
-    const VmInst p[] = {
-        {OP_PUSH, 0}, {OP_PUSH, 4}, {OP_ALLOC, 0}, {OP_STORE32, 0},
-        {OP_PUSH, 0}, {OP_DUP, 0}, {OP_PUSH, 6}, {OP_CMP_LT, 0}, {OP_JMP_Z, 22},
-        {OP_DUP, 0}, {OP_POP, 0},
-        {OP_PUSH, 0}, {OP_LOAD32, 0}, {OP_DUP, 0}, {OP_PUSH, 10}, {OP_ADD, 0},
-        {OP_PUSH, 0}, {OP_STORE32, 0}, {OP_POP, 0},
-        {OP_PUSH, 1}, {OP_ADD, 0}, {OP_JMP, 5},
-        {OP_PUSH, 0}, {OP_LOAD32, 0}, {OP_HALT, 0}
-    };
+    const uint16_t b = VM_HEAP_START;
     VmState vm;
     vm_init(&vm);
+    Prog p;
+    p_reset(&p);
+    emit8(&p, OP_PUSH, 0);
+    emit8(&p, OP_PUSH, 4);
+    emit0(&p, OP_ALLOC);
+    emit0(&p, OP_STORE32);
+    uint16_t loop = emit8(&p, OP_PUSH, 0); (void)loop;
+    emit0(&p, OP_DUP);
+    uint16_t cmp = emit8(&p, OP_PUSH, 6); (void)cmp;
+    emit0(&p, OP_CMP_LT);
+    uint16_t jz = emit2(&p, OP_JMP_Z, 0);
+    emit0(&p, OP_DUP);
+    emit0(&p, OP_POP);
+    emit8(&p, OP_PUSH, b);
+    emit0(&p, OP_LOAD32);
+    emit0(&p, OP_DUP);
+    emit8(&p, OP_PUSH, 10);
+    emit0(&p, OP_ADD);
+    emit8(&p, OP_PUSH, b);
+    emit0(&p, OP_STORE32);
+    emit0(&p, OP_POP);
+    emit8(&p, OP_PUSH, 1);
+    emit0(&p, OP_ADD);
+    uint16_t back = emit2(&p, OP_JMP, 0);
+    emit8(&p, OP_PUSH, b);
+    emit0(&p, OP_LOAD32);
+    emit0(&p, OP_HALT);
+    patch2(&p, 8, ADR(p, 22));  /* JMP_Z -> done */
+    patch2(&p, 21, ADR(p, 5));  /* JMP -> loop body, after counter init */
 
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
-    CHECK(vm.hp == 4u && heap_i32(&vm, 0) == 60);
+    load(&vm, &p);
+    CHECK(vm_run(&vm, 0) == VM_HALTED);
+    CHECK(vm.hp == b + 8u && vm.mem[b + 3u] == 60);
     CHECK(vm.sp == 2u && vm.stack[0] == 6 && vm.stack[1] == 60);
+    (void)jz;
+    (void)back;
     vm_free(&vm);
 }
 

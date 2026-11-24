@@ -14,15 +14,17 @@ typedef enum {
     OPR_INT,     /* integer expression */
     OPR_TARGET,  /* label or integer expression */
     OPR_FLOAT,   /* floating-point literal (raw bits are emitted) */
-    OPR_LOCAL    /* local variable index */
+    OPR_LOCAL    /* local variable index (encoded in one byte) */
 } OperandKind;
 
 typedef enum { REF_NONE = 0, REF_TARGET, REF_VALUE } RefKind;
+typedef enum { D_BYTE, D_WORD, D_QWORD, D_STR, D_ALIGN } DataKind;
+typedef enum { ITEM_INST = 0, ITEM_DATA } ItemKind;
 
 typedef struct {
     const char *name;
     size_t len;
-    size_t index;
+    size_t item_index;  /* label points here; item_count means "end" */
 } Label;
 
 typedef struct {
@@ -32,34 +34,27 @@ typedef struct {
 } Constant;
 
 typedef struct {
+    ItemKind kind;
     VmOpcode op;
     int64_t arg;
     RefKind ref;
     const char *label;
     size_t label_len;
-    size_t line;
-} Pending;
-
-typedef enum { D_BYTE, D_WORD, D_QWORD, D_STR, D_ALIGN } DataKind;
-
-typedef struct {
-    DataKind kind;
+    DataKind data_kind;
     const char *text;
-    size_t len;
+    size_t text_len;
     size_t line;
-} DataItem;
+} Item;
 
 typedef struct {
     AsmProgram *out;
     char *src;
+    Item *items;
+    size_t item_count, item_cap;
     Label *labels;
     size_t label_count, label_cap;
     Constant *consts;
     size_t const_count, const_cap;
-    Pending *pending;
-    size_t pending_count, pending_cap;
-    DataItem *data;
-    size_t data_count, data_cap;
 } Parser;
 
 typedef struct {
@@ -107,7 +102,7 @@ static const OpDef OPS[] = {
     {"ROT",     OP_ROT,      OPR_NONE},
     {"PICK",    OP_PICK,     OPR_NONE},
 
-    /* Heap access */
+    /* RAM access */
     {"LOAD8",   OP_LOAD8,    OPR_NONE},
     {"STORE8",  OP_STORE8,   OPR_NONE},
     {"LOAD16",  OP_LOAD16,   OPR_NONE},
@@ -153,6 +148,8 @@ static const OpDef OPS[] = {
     {"READ_STR",   OP_READ_STR,   OPR_NONE}
 };
 
+/* ------------------------------------------------------------------ basics */
+
 void asm_program_init(AsmProgram *prog)
 {
     if (!prog) return;
@@ -162,17 +159,28 @@ void asm_program_init(AsmProgram *prog)
 void asm_program_free(AsmProgram *prog)
 {
     if (!prog) return;
-    free(prog->insts);
+    free(prog->bytes);
     free(prog->lines);
-    prog->insts = NULL;
-    prog->lines = NULL;
-    prog->count = 0;
+    memset(prog, 0, sizeof(*prog));
 }
 
-size_t asm_line_of(const AsmProgram *prog, size_t ip)
+/* Release only emitted payload buffers; keep error_line/error for diagnostics. */
+static void clear_payload(AsmProgram *prog)
 {
-    if (!prog || !prog->lines || ip >= prog->count) return 0u;
-    return prog->lines[ip];
+    free(prog->bytes);
+    free(prog->lines);
+    prog->bytes = NULL;
+    prog->lines = NULL;
+    prog->len = 0u;
+    prog->entry = 0u;
+}
+
+size_t asm_line_of(const AsmProgram *prog, uint16_t addr)
+{
+    if (!prog || !prog->lines || addr < VM_IMAGE_START) return 0u;
+    size_t offset = (size_t)addr - VM_IMAGE_START;
+    if (offset >= prog->len) return 0u;
+    return prog->lines[offset];
 }
 
 static int fail(Parser *p, size_t line, const char *fmt, ...)
@@ -274,17 +282,13 @@ static void ex_ws(Expr *e)
 
 static int ex_expr(Expr *e, int64_t *out);
 
+/* Only constants are evaluable at parse time. Labels are resolved after the
+ * byte layout is known, which lets them denote absolute RAM addresses. */
 static int ex_lookup(const Parser *p, const char *name, size_t len, int64_t *out)
 {
     for (size_t i = 0; i < p->const_count; i++) {
         if (p->consts[i].len == len && memcmp(p->consts[i].name, name, len) == 0) {
             *out = p->consts[i].value;
-            return 0;
-        }
-    }
-    for (size_t i = 0; i < p->label_count; i++) {
-        if (p->labels[i].len == len && memcmp(p->labels[i].name, name, len) == 0) {
-            *out = (int64_t)p->labels[i].index;
             return 0;
         }
     }
@@ -343,7 +347,6 @@ static int ex_unary(Expr *e, int64_t *out)
     if (e->cur < e->end && (*e->cur == '-' || *e->cur == '+' || *e->cur == '~')) {
         char op = *e->cur++;
         ex_ws(e);
-        /* INT64_MIN cannot be written as a positive int64 literal. */
         static const char min_literal[] = "9223372036854775808";
         size_t n = sizeof min_literal - 1u;
         if (op == '-' && (size_t)(e->end - e->cur) >= n &&
@@ -426,7 +429,7 @@ static const Label *find_label(const Parser *p, const char *name, size_t len)
     return NULL;
 }
 
-static int add_label(Parser *p, const char *name, size_t len, size_t index)
+static int add_label(Parser *p, const char *name, size_t len, size_t item_index)
 {
     if (find_label(p, name, len)) return -2; /* duplicate */
     if (grow((void **)&p->labels, &p->label_cap, p->label_count + 1u,
@@ -434,7 +437,7 @@ static int add_label(Parser *p, const char *name, size_t len, size_t index)
     Label *label = &p->labels[p->label_count++];
     label->name = name;
     label->len = len;
-    label->index = index;
+    label->item_index = item_index;
     return 0;
 }
 
@@ -452,54 +455,45 @@ static int add_const(Parser *p, const char *name, size_t len, int64_t value)
     return 0;
 }
 
-static int add_pending(Parser *p, VmOpcode op, int64_t arg, size_t line)
+static Item *add_item(Parser *p, size_t line)
 {
-    if (grow((void **)&p->pending, &p->pending_cap, p->pending_count + 1u,
-             sizeof *p->pending) != 0) return -1;
-    Pending *inst = &p->pending[p->pending_count++];
-    memset(inst, 0, sizeof *inst);
-    inst->op = op;
-    inst->arg = arg;
-    inst->line = line;
-    return 0;
-}
-
-static int add_data(Parser *p, DataKind kind, const char *text, size_t len, size_t line)
-{
-    if (grow((void **)&p->data, &p->data_cap, p->data_count + 1u,
-             sizeof *p->data) != 0) return -1;
-    DataItem *item = &p->data[p->data_count++];
-    item->kind = kind;
-    item->text = text;
-    item->len = len;
+    if (grow((void **)&p->items, &p->item_cap, p->item_count + 1u,
+             sizeof *p->items) != 0) return NULL;
+    Item *item = &p->items[p->item_count++];
+    memset(item, 0, sizeof(*item));
     item->line = line;
-    return 0;
+    return item;
 }
 
 /* ---------------------------------------------------------- data emission */
 
 typedef struct {
     uint8_t *bytes;
+    size_t *lines;
     size_t len, cap;
 } DataBuf;
 
-static int db_append(DataBuf *db, const uint8_t *src, size_t n)
+static int db_append(DataBuf *db, const uint8_t *src, size_t n, size_t line)
 {
     if (grow((void **)&db->bytes, &db->cap, db->len + n, 1u) != 0) return -1;
+    size_t *new_lines = realloc(db->lines, db->cap * sizeof *db->lines);
+    if (!new_lines) return -1;
+    db->lines = new_lines;
     memcpy(db->bytes + db->len, src, n);
+    for (size_t i = 0; i < n; i++) db->lines[db->len + i] = line;
     db->len += n;
     return 0;
 }
 
-static int db_byte(DataBuf *db, uint8_t b)
+static int db_byte(DataBuf *db, uint8_t b, size_t line)
 {
-    return db_append(db, &b, 1u);
+    return db_append(db, &b, 1u, line);
 }
 
-static int db_number(DataBuf *db, uint64_t v, unsigned width)
+static int db_number(DataBuf *db, uint64_t v, unsigned width, size_t line)
 {
     for (unsigned i = 0; i < width; i++) {
-        if (db_byte(db, (uint8_t)(v >> (8u * (width - 1u - i)))) != 0) return -1;
+        if (db_byte(db, (uint8_t)(v >> (8u * (width - 1u - i))), line) != 0) return -1;
     }
     return 0;
 }
@@ -539,32 +533,42 @@ static int emit_string(Parser *p, DataBuf *db, const char *text, size_t len, siz
                 default: return fail(p, line, "unknown escape sequence");
             }
         }
-        if (db_byte(db, c) != 0) return fail(p, line, "out of memory");
+        if (db_byte(db, c, line) != 0) return fail(p, line, "out of memory");
     }
     return 0;
 }
 
-static int emit_data(Parser *p, DataBuf *db)
+/* Emit all data items into the area after the entry JMP, recording the
+ * absolute RAM address where each item starts. */
+static int emit_data(Parser *p, DataBuf *db, size_t *item_addr)
 {
-    for (size_t i = 0; i < p->data_count; i++) {
-        const DataItem *item = &p->data[i];
-        if (item->kind == D_STR) {
-            if (emit_string(p, db, item->text, item->len, item->line) != 0) return -1;
+    for (size_t i = 0; i < p->item_count; i++) {
+        Item *item = &p->items[i];
+        if (item->kind != ITEM_DATA) continue;
+        item_addr[i] = VM_IMAGE_START + 3u + db->len;
+
+        if (item->data_kind == D_STR) {
+            if (emit_string(p, db, item->text, item->text_len, item->line) != 0)
+                return -1;
             continue;
         }
-        if (item->kind == D_ALIGN) {
+        if (item->data_kind == D_ALIGN) {
             int64_t n;
-            if (eval_expr(p, item->text, item->len, &n) != 0 || n <= 0 || n > 4096) {
+            if (eval_expr(p, item->text, item->text_len, &n) != 0 ||
+                n <= 0 || n > 4096) {
                 return fail(p, item->line, "invalid ALIGN value");
             }
             while (db->len % (size_t)n != 0u) {
-                if (db_byte(db, 0u) != 0) return fail(p, item->line, "out of memory");
+                if (db_byte(db, 0u, item->line) != 0)
+                    return fail(p, item->line, "out of memory");
             }
             continue;
         }
-        unsigned width = item->kind == D_BYTE ? 1u : (item->kind == D_WORD ? 2u : 8u);
+
+        unsigned width = item->data_kind == D_BYTE ? 1u :
+                         (item->data_kind == D_WORD ? 2u : 8u);
         const char *cur = item->text;
-        const char *end = item->text + item->len;
+        const char *end = item->text + item->text_len;
         if (cur >= end) return fail(p, item->line, "directive requires a value");
         for (;;) {
             const char *start = cur;
@@ -574,14 +578,21 @@ static int emit_data(Parser *p, DataBuf *db)
                 return fail(p, item->line, "invalid integer '%.*s'",
                             (int)(cur - start), start);
             }
-            if (db_number(db, (uint64_t)value, width) != 0) {
+            if (db_number(db, (uint64_t)value, width, item->line) != 0)
                 return fail(p, item->line, "out of memory");
-            }
             while (cur < end && (isspace((unsigned char)*cur) || *cur == ',')) cur++;
             if (cur >= end) break;
         }
     }
     return 0;
+}
+
+static void put_be(uint8_t *p, uint64_t v, unsigned width)
+{
+    for (unsigned i = 0; i < width; i++) {
+        p[width - 1u - i] = (uint8_t)(v & 0xFFu);
+        v >>= 8;
+    }
 }
 
 /* ----------------------------------------------------------------- parser */
@@ -612,7 +623,7 @@ int asm_parse_string(AsmProgram *prog, const char *source)
         char *s = skip_ws(cursor);
         trim_end(s);
 
-        /* Labels may share a line with an instruction: "loop: DUP". */
+        /* Labels may share a line with an instruction or data directive. */
         while (*s && *s != '"') {
             size_t n = 0;
             while (s[n] && s[n] != ':' && !isspace((unsigned char)s[n])) n++;
@@ -621,7 +632,7 @@ int asm_parse_string(AsmProgram *prog, const char *source)
                 fail(&p, line_no, "invalid label name");
                 goto error;
             }
-            int rc = add_label(&p, s, n, p.pending_count);
+            int rc = add_label(&p, s, n, p.item_count);
             if (rc == -2) {
                 fail(&p, line_no, "duplicate label '%.*s'", (int)n, s);
                 goto error;
@@ -672,13 +683,13 @@ int asm_parse_string(AsmProgram *prog, const char *source)
                     fail(&p, line_no, "directive requires a value");
                     goto error;
                 }
-                /* Data directives consume the whole rest of the line so that
-                 * comma-separated expressions and strings stay intact. */
                 size_t text_len = strlen(rest);
-                if (add_data(&p, kind, rest, text_len, line_no) != 0) {
-                    fail(&p, line_no, "out of memory");
-                    goto error;
-                }
+                Item *item = add_item(&p, line_no);
+                if (!item) goto oom;
+                item->kind = ITEM_DATA;
+                item->data_kind = kind;
+                item->text = rest;
+                item->text_len = text_len;
             } else {
                 const OpDef *def = find_op(s, mn_len);
                 if (!def) {
@@ -690,16 +701,24 @@ int asm_parse_string(AsmProgram *prog, const char *source)
                             fail(&p, line_no, "%.*s takes no operand", (int)mn_len, s);
                             goto error;
                         }
+                        Item *it;
                         if (token_eq_ci(s, mn_len, "INC")) {
-                            if (add_pending(&p, OP_PUSH, 1, line_no) != 0 ||
-                                add_pending(&p, OP_ADD, 0, line_no) != 0) goto oom;
+                            it = add_item(&p, line_no); if (!it) goto oom;
+                            it->op = OP_PUSH; it->arg = 1;
+                            it = add_item(&p, line_no); if (!it) goto oom;
+                            it->op = OP_ADD;
                         } else if (token_eq_ci(s, mn_len, "DEC")) {
-                            if (add_pending(&p, OP_PUSH, 1, line_no) != 0 ||
-                                add_pending(&p, OP_SUB, 0, line_no) != 0) goto oom;
+                            it = add_item(&p, line_no); if (!it) goto oom;
+                            it->op = OP_PUSH; it->arg = 1;
+                            it = add_item(&p, line_no); if (!it) goto oom;
+                            it->op = OP_SUB;
                         } else {
-                            if (add_pending(&p, OP_PUSH, 0, line_no) != 0 ||
-                                add_pending(&p, OP_SWAP, 0, line_no) != 0 ||
-                                add_pending(&p, OP_SUB, 0, line_no) != 0) goto oom;
+                            it = add_item(&p, line_no); if (!it) goto oom;
+                            it->op = OP_PUSH; it->arg = 0;
+                            it = add_item(&p, line_no); if (!it) goto oom;
+                            it->op = OP_SWAP;
+                            it = add_item(&p, line_no); if (!it) goto oom;
+                            it->op = OP_SUB;
                         }
                     } else {
                         fail(&p, line_no, "unknown instruction '%.*s'", (int)mn_len, s);
@@ -710,7 +729,9 @@ int asm_parse_string(AsmProgram *prog, const char *source)
                         fail(&p, line_no, "%s takes no operand", def->name);
                         goto error;
                     }
-                    if (add_pending(&p, def->op, 0, line_no) != 0) goto oom;
+                    Item *item = add_item(&p, line_no);
+                    if (!item) goto oom;
+                    item->op = def->op;
                 } else if (rest_len == 0u) {
                     if (def->operand == OPR_TARGET) {
                         fail(&p, line_no, "%s requires a target", def->name);
@@ -750,21 +771,18 @@ int asm_parse_string(AsmProgram *prog, const char *source)
                         }
                     }
 
-                    if (grow((void **)&p.pending, &p.pending_cap,
-                             p.pending_count + 1u, sizeof *p.pending) != 0) goto oom;
-                    Pending *inst = &p.pending[p.pending_count++];
-                    memset(inst, 0, sizeof *inst);
-                    inst->op = def->op;
-                    inst->arg = value;
-                    inst->ref = ref;
-                    inst->label = ref == REF_NONE ? NULL : rest;
-                    inst->label_len = rest_len;
-                    inst->line = line_no;
-
-                    if (def->operand == OPR_LOCAL && value < 0) {
+                    if ((def->operand == OPR_LOCAL || def->op == OP_ENTER) &&
+                        (value < 0 || value > 255)) {
                         fail(&p, line_no, "invalid local index");
                         goto error;
                     }
+                    Item *item = add_item(&p, line_no);
+                    if (!item) goto oom;
+                    item->op = def->op;
+                    item->arg = value;
+                    item->ref = ref;
+                    item->label = ref == REF_NONE ? NULL : rest;
+                    item->label_len = rest_len;
                 }
             }
         }
@@ -774,92 +792,126 @@ int asm_parse_string(AsmProgram *prog, const char *source)
         if (!*cursor) break; /* trailing newline does not start a new line */
     }
 
-    if (p.pending_count == 0u) {
+    if (p.item_count == 0u) {
         fail(&p, line_no, "no instructions");
         goto error;
     }
 
+    size_t *item_addr = calloc(p.item_count + 1u, sizeof *item_addr);
     DataBuf data;
     memset(&data, 0, sizeof data);
-    if (emit_data(&p, &data) != 0) {
+    if (!item_addr) goto oom;
+    if (emit_data(&p, &data, item_addr) != 0) {
+        free(item_addr);
         free(data.bytes);
+        free(data.lines);
         goto error;
     }
 
-    /* Data directives become an initialization prologue executed before the
-     * program body. Every source instruction index is shifted by its length. */
-    size_t prologue = 0;
-    if (data.len > 0u) prologue = 3u + 3u * data.len;
+    /* Layout: [entry JMP][static data][encoded instructions]. */
+    size_t code_off = 3u + data.len;
+    size_t total = code_off;
+    for (size_t i = 0; i < p.item_count; i++) {
+        if (p.items[i].kind != ITEM_INST) continue;
+        item_addr[i] = VM_IMAGE_START + total;
+        total += vm_inst_size((uint8_t)p.items[i].op);
+    }
+    item_addr[p.item_count] = VM_IMAGE_START + total;
 
-    size_t total = prologue + p.pending_count;
-    prog->insts = calloc(total, sizeof *prog->insts);
-    prog->lines = calloc(total, sizeof *prog->lines);
-    if (!prog->insts || !prog->lines) {
+    if (total > VM_IMAGE_MAX) {
+        fail(&p, line_no, "image too large (%zu bytes)", total);
+        free(item_addr);
         free(data.bytes);
+        free(data.lines);
+        goto error;
+    }
+
+    prog->bytes = calloc(total, 1u);
+    prog->lines = calloc(total, sizeof *prog->lines);
+    if (!prog->bytes || !prog->lines) {
+        free(item_addr);
+        free(data.bytes);
+        free(data.lines);
         goto oom;
     }
-    prog->count = total;
+    prog->len = total;
+    prog->entry = 0u;
 
-    size_t pos = 0;
-    size_t data_line = p.data_count > 0u ? p.data[0].line : 1u;
+    size_t first_line = p.items[0].line;
+    prog->bytes[0] = (uint8_t)OP_JMP;
+    put_be(prog->bytes + 1u, (uint64_t)(VM_IMAGE_START + code_off), 2u);
+    for (size_t i = 0; i < 3u; i++) prog->lines[i] = first_line;
+
     if (data.len > 0u) {
-        prog->insts[pos++] = (VmInst){OP_PUSH, (int64_t)data.len};
-        prog->lines[pos - 1u] = data_line;
-        prog->insts[pos++] = (VmInst){OP_ALLOC, 0};
-        prog->lines[pos - 1u] = data_line;
-        prog->insts[pos++] = (VmInst){OP_POP, 0};
-        prog->lines[pos - 1u] = data_line;
-        for (size_t i = 0; i < data.len; i++) {
-            prog->insts[pos++] = (VmInst){OP_PUSH, (int64_t)data.bytes[i]};
-            prog->lines[pos - 1u] = data_line;
-            prog->insts[pos++] = (VmInst){OP_PUSH, (int64_t)i};
-            prog->lines[pos - 1u] = data_line;
-            prog->insts[pos++] = (VmInst){OP_STORE8, 0};
-            prog->lines[pos - 1u] = data_line;
-        }
+        memcpy(prog->bytes + 3u, data.bytes, data.len);
+        memcpy(prog->lines + 3u, data.lines, data.len * sizeof *prog->lines);
     }
-    free(data.bytes);
 
-    for (size_t i = 0; i < p.pending_count; i++) {
-        Pending *src = &p.pending[i];
-        VmInst inst = {src->op, src->arg};
-        if (src->ref != REF_NONE) {
-            const Label *label = find_label(&p, src->label, src->label_len);
+    size_t pos = code_off;
+    for (size_t i = 0; i < p.item_count; i++) {
+        Item *item = &p.items[i];
+        if (item->kind != ITEM_INST) continue;
+
+        uint8_t op = (uint8_t)item->op;
+        int64_t arg = item->arg;
+        if (item->ref != REF_NONE) {
+            const Label *label = find_label(&p, item->label, item->label_len);
             if (!label) {
-                fail(&p, src->line, "undefined label or invalid integer '%.*s'",
-                     (int)src->label_len, src->label);
+                fail(&p, item->line, "undefined label or invalid integer '%.*s'",
+                     (int)item->label_len, item->label);
+                free(item_addr);
+                free(data.bytes);
+                free(data.lines);
                 goto error;
             }
-            inst.arg = (int64_t)label->index + (int64_t)prologue;
-        } else if (inst.op == OP_JMP || inst.op == OP_JMP_Z || inst.op == OP_CALL) {
-            inst.arg += (int64_t)prologue;
+            if (label->item_index > p.item_count) {
+                fail(&p, item->line, "invalid label target");
+                free(item_addr);
+                free(data.bytes);
+                free(data.lines);
+                goto error;
+            }
+            arg = (int64_t)item_addr[label->item_index];
         }
-        if ((inst.op == OP_JMP || inst.op == OP_JMP_Z || inst.op == OP_CALL) &&
-            (inst.arg < 0 || (uint64_t)inst.arg >= total)) {
-            fail(&p, src->line, "jump target %" PRId64 " out of range", inst.arg);
-            goto error;
+        if (op == OP_JMP || op == OP_JMP_Z || op == OP_CALL) {
+            if (arg < 0 || arg >= (int64_t)VM_RAM_SIZE) {
+                fail(&p, item->line, "jump target %" PRId64 " out of range", arg);
+                free(item_addr);
+                free(data.bytes);
+                free(data.lines);
+                goto error;
+            }
         }
-        prog->insts[pos] = inst;
-        prog->lines[pos] = src->line;
+
+        unsigned width = (unsigned)vm_inst_size(op) - 1u;
+        prog->bytes[pos] = op;
+        for (size_t k = 0u; k <= width; k++) prog->lines[pos + k] = item->line;
         pos++;
+        if (width == 1u) {
+            prog->bytes[pos] = (uint8_t)arg;
+        } else if (width == 2u || width == 8u) {
+            put_be(prog->bytes + pos, (uint64_t)arg, width);
+        }
+        pos += width;
     }
 
+    free(item_addr);
+    free(data.bytes);
+    free(data.lines);
     free(p.src);
+    free(p.items);
     free(p.labels);
     free(p.consts);
-    free(p.pending);
-    free(p.data);
     return 0;
 
 oom:
     fail(&p, line_no, "out of memory");
 error:
     free(p.src);
+    free(p.items);
     free(p.labels);
     free(p.consts);
-    free(p.pending);
-    free(p.data);
-    asm_program_free(prog);
+    clear_payload(prog);
     return -1;
 }
 
@@ -900,4 +952,41 @@ int asm_parse_file(AsmProgram *prog, const char *path)
     int rc = asm_parse_string(prog, buf);
     free(buf);
     return rc;
+}
+
+/* --------------------------------------------------------------- ROM output */
+
+int asm_make_rom(const AsmProgram *prog, uint8_t *rom, size_t rom_cap,
+                 size_t *rom_len)
+{
+    if (!prog || !rom || !prog->bytes || prog->entry >= prog->len ||
+        prog->len > VM_IMAGE_MAX) return -1;
+    size_t needed = VM_ROM_HEADER_SIZE + prog->len;
+    if (rom_cap < needed) return -1;
+
+    rom[0] = 0x56; rom[1] = 0x4D; rom[2] = 0x49; rom[3] = 0x4D;
+    rom[4] = VM_ROM_VERSION;
+    rom[5] = 0u;
+    put_be(rom + 6u, 0u, 2u);
+    put_be(rom + 8u, (uint64_t)prog->len, 2u);
+    put_be(rom + 10u, (uint64_t)(VM_IMAGE_START + prog->entry), 2u);
+    put_be(rom + 12u, 0u, 4u);
+    memcpy(rom + VM_ROM_HEADER_SIZE, prog->bytes, prog->len);
+
+    if (rom_len) *rom_len = needed;
+    return 0;
+}
+
+int asm_write_rom(const AsmProgram *prog, const char *path)
+{
+    if (!prog || !path) return -1;
+    uint8_t rom[VM_ROM_HEADER_SIZE + VM_IMAGE_MAX];
+    size_t rom_len = 0;
+    if (asm_make_rom(prog, rom, sizeof rom, &rom_len) != 0) return -1;
+
+    FILE *file = fopen(path, "wb");
+    if (!file) return -1;
+    size_t written = fwrite(rom, 1u, rom_len, file);
+    int rc = fclose(file);
+    return (written == rom_len && rc == 0) ? 0 : -1;
 }

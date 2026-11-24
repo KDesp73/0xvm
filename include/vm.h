@@ -4,26 +4,34 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define VM_STACK_INIT_CAP   256u
-#define VM_STACK_CAP        VM_STACK_INIT_CAP /* legacy alias for the initial capacity */
-#define VM_FRAME_INIT_CAP   64u
-#define VM_BLOCK_INIT_CAP   64u
-#define VM_HEAP_INIT_CAP    4096u   /* initial growth chunk; not a hard limit */
+/* Fixed machine geometry (see docs/Machine-Contract.md). */
+#define VM_RAM_SIZE        0x10000u  /* 64 KiB, byte addresses 0x0000..0xFFFF */
+#define VM_ZERO_PAGE_SIZE  0x0100u
+#define VM_IMAGE_START     0x0100u
+#define VM_IMAGE_MAX       0x3F00u   /* 0x4000 - 0x0100 */
+#define VM_HEAP_START      0x4000u
+#define VM_STACK_SIZE      256u      /* cells, outside addressable RAM */
+#define VM_FRAME_COUNT     64u
+#define VM_BLOCK_COUNT     64u
+
+/* ROM header: 16 bytes, big-endian multi-byte fields. */
+#define VM_ROM_HEADER_SIZE 16u
+#define VM_ROM_VERSION     1u
 
 typedef enum {
     OP_HALT = 0,
     OP_NOP,
-    OP_PUSH,      /* operand: int64_t value */
+    OP_PUSH,      /* 8-byte immediate: int64_t value */
     OP_POP,
     OP_DUP,
     OP_ADD,
     OP_SUB,
     OP_MUL,
     OP_CMP_LT,
-    OP_JMP,       /* operand: int64_t target_ip (absolute instruction index) */
-    OP_JMP_Z,     /* operand: int64_t target_ip */
-    OP_ALLOC,     /* pops size (int64_t), pushes heap offset (int64_t); grows heap */
-    OP_LOAD32,    /* pops addr, pushes sign-extended int32 from heap */
+    OP_JMP,       /* 2-byte immediate: absolute byte address */
+    OP_JMP_Z,     /* 2-byte immediate: absolute byte address */
+    OP_ALLOC,     /* pops size (int64_t), pushes heap address (uint16_t) */
+    OP_LOAD32,    /* pops addr, pushes sign-extended int32 from RAM */
     OP_STORE32,   /* pops addr (top), pops val, writes low 32 bits */
     OP_PRINT,     /* pops val (int64_t), prints it */
 
@@ -51,7 +59,7 @@ typedef enum {
     OP_ROT,       /* [..., a, b, c] -> [..., b, c, a] */
     OP_PICK,      /* pops n (top), pushes stack[sp-1-n]; n = 0 duplicates top */
 
-    /* Wider/narrower heap access. All accessors honor [0, hp). */
+    /* RAM access. All accessors honor [0, 0x10000) for their width. */
     OP_LOAD8,     /* pops addr, pushes unsigned byte */
     OP_STORE8,    /* pops addr (top), pops val, writes low 8 bits */
     OP_LOAD16,    /* pops addr, pushes unsigned 16-bit value */
@@ -63,18 +71,18 @@ typedef enum {
     /* Heap reuse. Allocator metadata lives in VmState. */
     OP_FREE,      /* pops addr; returns its block to the free list */
 
-    /* Procedures. CALL pushes {return ip, frame pointer}; RET pops it. */
-    OP_CALL,      /* operand: target_ip */
-    OP_CALL_I,    /* pops target_ip from the stack */
+    /* Procedures. CALL pushes {return byte address, frame pointer}. */
+    OP_CALL,      /* 2-byte immediate: absolute byte address */
+    OP_CALL_I,    /* pops target byte address from the stack */
     OP_RET,       /* pops result, unwinds frame, pushes result */
-    OP_ENTER,     /* operand: n; reserves n zeroed locals in the current frame */
-    OP_LOCAL_GET, /* operand: local index; pushes stack[fp + index] */
-    OP_LOCAL_SET, /* operand: local index; pops value into stack[fp + index] */
+    OP_ENTER,     /* 1-byte immediate: reserve n zeroed locals */
+    OP_LOCAL_GET, /* 1-byte immediate: push stack[fp + index] */
+    OP_LOCAL_SET, /* 1-byte immediate: pop value into stack[fp + index] */
 
-    OP_JMP_I,     /* pops target_ip and jumps; target validated before pop */
+    OP_JMP_I,     /* pops target byte address and jumps */
 
     /* IEEE-754 doubles: the stack stays int64_t, values are raw bit patterns. */
-    OP_PUSHF,     /* operand: raw 64-bit double pattern */
+    OP_PUSHF,     /* 8-byte immediate: raw 64-bit double pattern */
     OP_FADD,
     OP_FSUB,
     OP_FMUL,
@@ -91,19 +99,14 @@ typedef enum {
     OP_ITOF,      /* int64_t -> double */
     OP_FPRINT,    /* pops raw bits, prints the double */
 
-    /* Host I/O. Host-owned resources are deliberately not part of the state. */
-    OP_PRINT_STR, /* pops len (top), pops addr; prints heap bytes [addr, addr+len) */
+    /* Host I/O. Transitional until the Console device layer lands. */
+    OP_PRINT_STR, /* pops len (top), pops addr; prints RAM bytes [addr, addr+len) */
     OP_PRINT_CHAR,/* pops codepoint and prints one byte */
     OP_READ_INT,  /* reads one integer from stdin and pushes it (0 on bad input) */
-    OP_READ_STR,  /* pops max (top), pops addr; reads a line into heap, pushes length */
+    OP_READ_STR,  /* pops max (top), pops addr; reads a line into RAM, pushes len */
 
-    OP_COUNT      /* sentinel: number of opcodes */
+    OP_COUNT      /* sentinel: number of opcodes; values 0x46..0x7F are reserved */
 } VmOpcode;
-
-typedef struct {
-    uint8_t op;
-    int64_t arg;
-} VmInst;
 
 typedef enum {
     VM_OK = 0,
@@ -121,41 +124,50 @@ typedef enum {
 } VmStatus;
 
 typedef struct {
-    uint32_t ret_ip;   /* instruction to resume at after RET */
-    uint32_t prev_fp;  /* caller's frame pointer */
+    uint16_t ret_ip;   /* byte address to resume at after RET */
+    uint16_t prev_fp;  /* caller's frame pointer */
 } VmFrame;
 
 typedef struct {
-    uint64_t addr;
-    uint64_t size;     /* allocated size (already rounded up to 4) */
-    uint8_t live;      /* 1 = in use, 0 = on the free list */
+    uint16_t addr;
+    uint16_t size;     /* allocated size, rounded up to 8 */
+    uint8_t  live;     /* 1 = in use, 0 = on the free list */
 } VmBlock;
 
+/* The whole machine lives in this struct. No field owns heap memory. */
 typedef struct {
-    uint32_t ip;
-    uint32_t sp;
-    uint32_t fp;         /* index in stack of the current frame's first local */
-    uint64_t hp;         /* used heap bytes */
-    uint64_t heap_cap;   /* allocated heap capacity (>= hp) */
-    uint32_t ticks;
+    uint16_t ip;       /* byte address of the next instruction */
+    uint16_t sp;       /* live cells on the operand stack */
+    uint16_t fp;       /* index of the current frame's first local */
+    uint16_t fsp;      /* live call frames */
+    uint16_t hp;       /* allocator bump pointer; starts at VM_HEAP_START */
+    uint64_t ticks;    /* successfully executed instructions */
 
-    int64_t  *stack;     /* dynamically grown; NULL when stack_cap == 0 */
-    uint32_t  stack_cap;
-    uint8_t  *heap;      /* dynamically grown; NULL when hp == 0 */
-    VmFrame  *frames;    /* call frames; NULL when frame_cap == 0 */
-    uint32_t  fsp;
-    uint32_t  frame_cap;
-    VmBlock  *blocks;    /* allocator metadata; NULL when block_cap == 0 */
-    uint32_t  block_count;
-    uint32_t  block_cap;
+    int64_t  stack[VM_STACK_SIZE];
+    uint8_t  mem[VM_RAM_SIZE];
+    VmFrame  frames[VM_FRAME_COUNT];
+    VmBlock  blocks[VM_BLOCK_COUNT];
+    uint16_t block_count;
 } VmState;
 
 void vm_init(VmState *vm);
-/* Releases every owned buffer and resets the state. Safe on a zeroed/freed state. */
+/* Reset to the post-init state. No owned buffers exist; kept for host symmetry. */
 void vm_free(VmState *vm);
 
-VmStatus vm_step(VmState *vm, const VmInst *prog, size_t prog_len);
-VmStatus vm_run(VmState *vm, const VmInst *prog, size_t prog_len, uint32_t max_steps);
+/* Load a raw payload at VM_IMAGE_START and jump to `entry` (usually VM_IMAGE_START).
+ * `entry` must be inside the payload. Malformed images return VM_ERR_BAD_IP. */
+VmStatus vm_load_image(VmState *vm, const uint8_t *payload,
+                       size_t payload_len, uint16_t entry);
+
+/* Load a 16-byte VMIM header plus payload. The payload length must fit
+ * VM_IMAGE_MAX and the total buffer must be exactly header+payload bytes. */
+VmStatus vm_load_rom(VmState *vm, const uint8_t *rom, size_t rom_len);
+
+VmStatus vm_step(VmState *vm);
+VmStatus vm_run(VmState *vm, uint64_t max_steps);
+
+/* Total encoded size (opcode + immediates) of an opcode, or 1 if unknown. */
+unsigned vm_inst_size(uint8_t op);
 
 const char *vm_status_str(VmStatus status);
 const char *vm_opcode_name(uint8_t op);
