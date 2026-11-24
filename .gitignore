@@ -1,0 +1,53 @@
+# --- Build Directories & Binaries ---
+/bin/
+/build/
+/out/
+/dist/
+
+# --- Binaries ---
+*.exe
+*.out
+*.app
+
+# --- Compiled Objects & Libraries ---
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# --- CMake Artifacts ---
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile.in
+.cmake/
+*.cmake
+
+# --- Debug & Profiling Symbols ---
+*.dSYM/
+*.pdb
+*.idb
+*.gcno
+*.gcda
+*.gcov
+
+# --- IDEs & Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+
+# --- Dependencies (fetched at scaffold time, committed to the repo) ---
+# Overrides *.a/*.so/*.dylib etc. above so fetched libs stay tracked
+!/deps/**
+
+compile_commands.json
