@@ -4,7 +4,8 @@
 
 int main(void)
 {
-    int failures = test_asm() + test_rom() + test_device() + test_vm();
+    int failures = test_asm() + test_rom() + test_device() +
+                   test_conformance() + test_dis() + test_vm();
 
     if (failures) {
         fprintf(stderr, "%d test check(s) failed\n", failures);

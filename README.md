@@ -15,6 +15,9 @@ make all         # build build/vm-cli and build/vm-test
 make test        # build and run the test suite (ASan/UBSan in DEBUG builds)
 ```
 
+`make test` also assembles and runs `tests/conformance.asm` from both source and
+a generated ROM, asserting that it prints `OK`.
+
 ## Run programs
 
 `vm-cli run` accepts either assembly source or a `VMIM` ROM:
@@ -33,11 +36,21 @@ make test        # build and run the test suite (ASan/UBSan in DEBUG builds)
 ./build/vm-cli build -f examples/counter.asm -o counter.rom
 ```
 
+`vm-cli dis` prints a linear disassembly of a source file or ROM. It starts at
+the entry point, follows the entry `JMP` past static data, and decodes to the end
+of the payload. Reserved bytes are labelled `RESERVED`, and truncated immediates
+are reported as decode errors:
+
+```sh
+./build/vm-cli dis -f counter.rom
+./build/vm-cli dis -f examples/counter.asm
+```
+
 Flags: `-f/--file` selects the input file, `-o/--output` sets the ROM output
 path for `build`, `-t/--trace` prints each executed instruction with its source
 line, `-D/--debug` enables the System debug port (the Console device then
 prefixes output with `[vm tick=N]`), `-v/--version` prints the version, and
-`-h/--help` prints usage. Use `run` or `build` as the command.
+`-h/--help` prints usage. Use `run`, `build`, or `dis` as the command.
 
 ## Assembly model
 

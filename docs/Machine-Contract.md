@@ -250,7 +250,8 @@ The current codebase conforms to this contract:
 5. Core I/O opcodes are gone. `DEI`/`DEO` are the only I/O instructions, and
    `PRINT*`/`READ*` are assembler pseudo-ops that expand to Console ports.
 6. `vm-cli run` accepts assembly source or a ROM, `vm-cli build` writes a ROM,
-   and the CLI installs System/Console device callbacks.
+   `vm-cli dis` decodes source or a ROM (labelling reserved bytes and reporting
+   truncated immediates), and the CLI installs System/Console device callbacks.
 7. Tests cover byte-encoded programs, ROM loading, device calls, device errors,
-   device halts, and retired opcode behavior. A standalone conformance image for
-   third-party emulators remains a future toolchain item.
+   device halts, retired opcode behavior, an executable conformance ROM, and
+   disassembler decoding, including reserved and truncated encodings.

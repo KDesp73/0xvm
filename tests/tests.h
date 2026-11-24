@@ -9,5 +9,9 @@ int test_asm(void);
 int test_rom(void);
 /* Runs the device-layer test cases and returns the number of failed checks. */
 int test_device(void);
+/* Runs the executable conformance ROM and returns the number of failed checks. */
+int test_conformance(void);
+/* Runs the disassembler test cases and returns the number of failed checks. */
+int test_dis(void);
 
 #endif /* TESTS_H */

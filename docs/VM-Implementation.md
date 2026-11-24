@@ -18,10 +18,12 @@ The layers are:
    interpreter, RAM allocator metadata, and two device-port instructions.
 2. **Assembler** (`include/asm.h`, `src/asm.c`) — source text to byte payload
    and ROM, with a per-byte source-line map.
-3. **CLI** (`apps/cli/main.c`) — local `run`/`build` commands, tracing, tick
-   prefixes, and host-backed System/Console devices.
-4. **Tests** (`tests/test_vm.c`, `tests/test_asm.c`, `tests/test_rom.c`,
-   `tests/test_device.c`) — VM, assembler, ROM, and device conformance checks.
+3. **CLI** (`apps/cli/main.c`) — local `run`/`build`/`dis` commands, tracing,
+   tick prefixes, and host-backed System/Console devices.
+4. **Toolchain helper** (`include/dis.h`, `src/dis.c`) — one-instruction decoder
+   used by `vm-cli dis`.
+5. **Tests** — VM, assembler, ROM, device, conformance ROM, and disassembler
+   checks under `tests/`.
 
 Cells and arithmetic are 64-bit; addresses and `ip` are 16-bit byte addresses.
 The VM has a fixed 64 KiB RAM, and no buffer in the core grows at runtime. The
@@ -34,9 +36,11 @@ core contains no stdio calls: all I/O passes through host device callbacks.
 | `include/vm.h` | Public types, opcodes, statuses, constants, device API, and declarations |
 | `src/vm.c` | ROM/image loading, decoder, interpreter, device dispatch, heap allocator |
 | `include/asm.h`, `src/asm.c` | Two-pass assembler, byte encoding, pseudo-ops, ROM writer |
-| `apps/cli/main.c` | CLI: assemble, build ROMs, run sources/ROMs, trace, System/Console devices |
+| `include/dis.h`, `src/dis.c` | Instruction decoder for disassembly output |
+| `apps/cli/main.c` | CLI: assemble, build/disassemble ROMs, run sources/ROMs, trace, host devices |
 | `apps/test/main.c` | Test executable entry point |
-| `tests/*.c`, `tests/tests.h` | VM, assembler, ROM, and device test suites |
+| `tests/*.c`, `tests/tests.h` | VM, assembler, ROM, device, conformance, and disassembler suites |
+| `tests/conformance.asm` | Executable v2 conformance ROM source |
 | `examples/*.asm` | Example programs |
 | `Makefile` | Builds all apps and provides `make test` |
 
@@ -416,7 +420,13 @@ The CLI supports both paths:
 ./build/vm-cli run -f examples/counter.asm     # assemble, wrap, load, run
 ./build/vm-cli build -f examples/counter.asm   # write counter.rom
 ./build/vm-cli run -f counter.rom              # load and run the ROM
+./build/vm-cli dis -f counter.rom              # decode the ROM payload
 ```
+
+`dis` starts at the entry point, follows the entry `JMP` past static data, and
+decodes linearly to the end of the payload. Reserved opcode bytes are printed as
+`RESERVED (0xNN)` instead of being treated as errors; immediates that cross the
+payload end are reported as decode errors.
 
 ## 9. Building and testing
 
@@ -443,6 +453,10 @@ AddressSanitizer and UndefinedBehaviorSanitizer.
   programs, and parse errors.
 - The **ROM suite** checks header encoding, load validation, and writing a v2
   ROM that can be reloaded and run.
+- The **conformance suite** assembles and runs `tests/conformance.asm` from both
+  source and a generated ROM, checking that it prints exactly `OK`.
+- The **disassembler suite** checks every immediate shape, reserved bytes, RAM
+  and payload truncation, and linear decoding of a loaded image.
 
 For example:
 

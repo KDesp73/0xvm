@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "asm.h"
+#include "dis.h"
 #include "version.h"
 #define CLI_IMPLEMENTATION
 #include "io/cli.h"
@@ -58,6 +59,12 @@ static bool is_rom(const uint8_t *buf, size_t len)
 {
     return len >= 4u && buf[0] == 0x56 && buf[1] == 0x4D &&
            buf[2] == 0x49 && buf[3] == 0x4D;
+}
+
+static size_t rom_payload_len(const uint8_t *buf, size_t len)
+{
+    if (!is_rom(buf, len) || len < VM_ROM_HEADER_SIZE) return 0u;
+    return ((size_t)buf[8] << 8) | (size_t)buf[9];
 }
 
 static bool assemble(const uint8_t *source, AsmProgram *program)
@@ -330,6 +337,74 @@ static bool build_handler(void *context)
     return rc == 0;
 }
 
+static bool dis_handler(void *context)
+{
+    const CliContext *c = context;
+    if (!c->file) { ERRO("Provide a file with -f/--file"); return false; }
+
+    uint8_t *filebuf = NULL;
+    size_t filelen = 0u;
+    if (!read_file(c->file, &filebuf, &filelen)) return false;
+
+    VmState vm;
+    vm_init(&vm);
+    AsmProgram *program = NULL;
+    VmStatus st;
+    size_t payload_len = 0u;
+    if (is_rom(filebuf, filelen)) {
+        st = vm_load_rom(&vm, filebuf, filelen);
+        payload_len = rom_payload_len(filebuf, filelen);
+    } else {
+        st = load_source(&vm, filebuf, &program);
+        payload_len = program ? program->len : 0u;
+    }
+    free(filebuf);
+
+    if (st != VM_OK) {
+        ERRO("Load failed: %s", vm_status_str(st));
+        if (program) { asm_program_free(program); free(program); }
+        vm_free(&vm);
+        return false;
+    }
+
+    uint32_t end = (uint32_t)VM_IMAGE_START + (uint32_t)payload_len;
+    uint32_t cur = vm.ip;
+    bool ok = true;
+    bool first = true;
+    while (cur < end) {
+        char line[VM_DIS_LINE_MAX];
+        unsigned size = vm_disassemble_range(&vm.mem[0], (uint16_t)cur, end,
+                                             line, sizeof line);
+        if (size == 0u) {
+            ERRO("Cannot decode instruction at 0x%04X (truncated payload or reserved opcode)",
+                 (unsigned)cur);
+            ok = false;
+            break;
+        }
+        printf("%s\n", line);
+
+        /* The entry JMP skips the assembler's static-data area. */
+        if (first && size == 3u && vm.mem[cur] == OP_JMP) {
+            uint32_t target = (uint32_t)(((uint16_t)vm.mem[cur + 1u] << 8) |
+                                         (uint16_t)vm.mem[cur + 2u]);
+            if (target >= end) {
+                ERRO("Entry jump target 0x%04X is outside the payload",
+                     (unsigned)target);
+                ok = false;
+                break;
+            }
+            cur = target;
+        } else {
+            cur += size;
+        }
+        first = false;
+    }
+
+    if (program) { asm_program_free(program); free(program); }
+    vm_free(&vm);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     cli_args_t args = cli_args_make(
@@ -346,6 +421,7 @@ int main(int argc, char **argv)
     dispatcher_init(&dispatcher);
     dispatcher_add(&dispatcher, "run", "assemble/load and run a program", run_handler);
     dispatcher_add(&dispatcher, "build", "assemble a source file into a VMIM ROM", build_handler);
+    dispatcher_add(&dispatcher, "dis", "disassemble a source file or VMIM ROM", dis_handler);
 
     int opt;
     LOOP_ARGS(opt, args) {
@@ -353,7 +429,8 @@ int main(int argc, char **argv)
             case 'h':
                 cli_help(args, &dispatcher,
                          "vm-cli [-t] [-D] run -f program.asm|program.rom\n"
-                         "       vm-cli build -f program.asm [-o program.rom]",
+                         "       vm-cli build -f program.asm [-o program.rom]\n"
+                         "       vm-cli dis -f program.asm|program.rom",
                          "Written by KDesp73");
                 goto cleanup;
             case 'v':
