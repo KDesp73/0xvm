@@ -1,6 +1,7 @@
 ; Executable conformance ROM for the frozen v2 machine.
-; Each check jumps to `fail` on mismatch; a passing run prints exactly "OK\n".
-; Only System version input and Console character output are required of a host.
+; Each check jumps to `fail` on mismatch. A passing run prints a deterministic
+; System/Console transcript and ends with a device halt. Hosts must provide the
+; full System and Console port set documented in docs/Machine-Contract.md.
 
         NOP
 
@@ -373,12 +374,57 @@ fail:
         HALT
 
 checks_done:
-        PUSH 79
-        PRINT_CHAR
-        PUSH 75
-        PRINT_CHAR
+; Exercise every System/Console port with deterministic host input. A passing
+; run prints the golden transcript checked by tests/test_conformance.c and
+; ends through a device halt, not the HALT opcode.
+
+; System version; Console character and formatted output.
+        DEI 0x00
+        PRINT
+        PUSH 65
+        DEO 0x10
         PUSH 10
-        PRINT_CHAR
+        DEO 0x10
+        PUSH -42
+        PRINT
+        PUSHF 3.75
+        FPRINT
+        PUSH s_ok
+        PUSH 2
+        PRINT_STR
+
+; Console input: GETC='B', GETI=-7, GETS="hey".
+        DEI 0x11
+        PRINT
+        READ_INT
+        PRINT
+        PUSH in_buf
+        PUSH 8
+        READ_STR
+        DUP
+        PRINT
+        PUSH in_buf
+        SWAP
+        PRINT_STR
+
+; System debug flag round-trip; keep it off so output stays predictable.
+        DEI 0x01
+        PUSH 0
+        CMP_EQ
+        JMP_Z fail
+        PUSH 1
+        DEO 0x01
+        DEI 0x01
+        PUSH 1
+        CMP_EQ
+        JMP_Z fail
+        PUSH 0
+        DEO 0x01
+
+; Device halt: the host returns VM_HALTED here, so the following HALT is
+; unreachable on a conforming host.
+        PUSH 0
+        DEO 0x02
         HALT
 
 ; Squares the argument left by the caller, then returns the result.
@@ -392,3 +438,7 @@ square:
         LOCAL_SET 0
         LOCAL_GET 0
         RET
+
+; Static data; the entry stub jumps over it.
+s_ok:   STR "OK"
+in_buf: DB 0, 0, 0, 0, 0, 0, 0, 0

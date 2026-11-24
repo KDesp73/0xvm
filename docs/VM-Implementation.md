@@ -487,8 +487,16 @@ AddressSanitizer and UndefinedBehaviorSanitizer.
   programs, and parse errors.
 - The **ROM suite** checks header encoding, load validation, and writing a v2
   ROM that can be reloaded and run.
-- The **conformance suite** assembles and runs `tests/conformance.asm` from both
-  source and a generated ROM, checking that it prints exactly `OK`.
+- The **conformance suite** assembles `tests/conformance.asm` and runs it from
+  both an in-memory ROM and a generated `build/conformance-v2.rom`. It checks
+  the exact transcript in `tests/conformance.expected`, final stack state, and
+  device-halt status. `make conformance-check` runs the same artifact through
+  `0xvm` with input `B-7\nhey\n` and diffs the CLI output.
+- The **negative conformance cases** build raw images for reserved/retired
+  opcodes, stack overflow/underflow, division by zero, out-of-range loads and
+  jump targets, bad frames/locals, heap overflow, and device errors. Each case
+  requires the expected status and atomic state on the failing step; a
+  truncated immediate is placed at the RAM boundary to test decode bounds.
 - The **disassembler suite** checks every immediate shape, reserved bytes, RAM
   and payload truncation, and linear decoding of a loaded image.
 

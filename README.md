@@ -12,8 +12,10 @@ for all I/O.
 ## Build
 
 ```sh
-make all         # build lib0xvm, the 0x* tools, and 0xtest
-make test        # run the test suite, including a conformance ROM that prints OK
+make all              # build lib0xvm, the 0x* tools, 0xtest, and the conformance ROM
+make test             # run 0xtest and the CLI conformance check
+make conformance      # write build/conformance-v2.rom
+make conformance-check # run that ROM through 0xvm and diff the golden transcript
 ```
 
 `make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, and five tools:
@@ -34,6 +36,17 @@ make test        # run the test suite, including a conformance ROM that prints O
 ./build/0xrom -f counter.rom
 ./build/0xdis -f counter.rom
 ```
+
+The conformance image is a real ROM, not just a C test. It exercises every
+opcode and the full System/Console device set, then halts through `VM_SYS_HALT`.
+The CLI host must produce `tests/conformance.expected` from this scripted input:
+
+```sh
+printf 'B-7\nhey\n' | ./build/0xvm -f build/conformance-v2.rom
+```
+
+`make test` checks the same ROM through a fresh scripted host and runs the CLI
+diff automatically.
 
 ## Assembly quick reference
 

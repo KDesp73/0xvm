@@ -56,7 +56,7 @@ size_t tools_rom_payload_len(const uint8_t *buf, size_t len)
 bool tools_assemble_file(const char *path, AsmProgram *program)
 {
     if (asm_parse_file(program, path) != 0) {
-        fprintf(stderr, "Assembly failed: %s\n", program->error);
+        ERRO("Assembly failed: %s", program->error);
         asm_program_free(program);
         return false;
     }

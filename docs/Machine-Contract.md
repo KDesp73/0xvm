@@ -255,6 +255,13 @@ The current codebase conforms to this contract:
    decodes source or a ROM (labelling reserved bytes and reporting truncated
    immediates), `0xrom` validates and prints ROM headers, and `0xvm` installs
    System/Console device callbacks.
-7. Tests cover byte-encoded programs, ROM loading, device calls, device errors,
-   device halts, retired opcode behavior, an executable conformance ROM, and
-   disassembler decoding, including reserved and truncated encodings.
+7. `tests/conformance.asm` is an executable v2 conformance image. It exercises
+   every opcode and immediate shape, the full System/Console port set, and ends
+   with `VM_SYS_HALT`. A passing run emits the golden transcript in
+   `tests/conformance.expected`; the CLI input is `B-7\nhey\n`.
+   `make conformance-check` runs the shipped ROM through `0xvm`, and `0xtest`
+   runs the same image through a fresh scripted host.
+8. C-level conformance cases check atomic errors for reserved/retired opcodes,
+   truncated immediates at the RAM boundary, stack overflow/underflow, division
+   by zero, bad addresses and jump targets, bad frames and locals, heap
+   overflow, and device errors.

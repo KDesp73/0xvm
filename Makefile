@@ -31,6 +31,8 @@ COMMON_OBJ = $(BUILD_DIR)/tools_common.o
 
 LIB_STATIC = $(BUILD_DIR)/lib0xvm.a
 LIB_SHARED = $(BUILD_DIR)/lib0xvm.so
+CONFORMANCE_ROM = $(BUILD_DIR)/conformance-v2.rom
+CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 UNAME_S   := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     SHARED_FLAG = -dynamiclib
@@ -55,7 +57,7 @@ endif
 TOTAL_FILES := $(words $(SRC))
 
 .PHONY: all
-all: libs $(TOOLS) $(TEST_BIN) ## Build libraries, tools, and tests
+all: libs $(TOOLS) $(TEST_BIN) $(CONFORMANCE_ROM) ## Build libraries, tools, tests, and conformance ROM
 
 .PHONY: libs
 libs: $(LIBS) ## Build static and shared lib0xvm
@@ -107,10 +109,25 @@ $(TEST_BIN): $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 -include $(DEP) $(TEST_DEP) $(TEST_MAIN:.o=.d) $(COMMON_OBJ:.o=.d) \
 	$(patsubst %,$(BUILD_DIR)/app_0x%.d,$(TOOL_NAMES))
 
+$(CONFORMANCE_ROM): $(TEST_DIR)/conformance.asm $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+	@echo "[INFO] Building conformance ROM"
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+.PHONY: conformance
+conformance: $(CONFORMANCE_ROM) ## Build the executable v2 conformance ROM
+
+.PHONY: conformance-check
+conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM through the CLI host
+	@echo "[RUN] CLI conformance check"
+	@printf 'B-7\nhey\n' | ./$(BUILD_DIR)/0xvm -f $(CONFORMANCE_ROM) 2>/dev/null \
+		| sed '/^\[INFO\] /d' > $(BUILD_DIR)/conformance-actual.txt
+	@diff -u $(CONFORMANCE_EXPECTED) $(BUILD_DIR)/conformance-actual.txt
+
 .PHONY: test
-test: $(TEST_BIN) ## Build and run the test app
+test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and CLI conformance check
 	@echo "[RUN] 0xtest"
 	@$(TEST_BIN)
+	@$(MAKE) --no-print-directory conformance-check
 
 .PHONY: clean
 clean: ## Remove all build files, libraries, and tools
