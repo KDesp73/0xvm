@@ -1,6 +1,8 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "asm.h"
 #include "tests.h"
@@ -350,6 +352,234 @@ static void test_line_mapping(void)
     asm_program_free(&prog);
 }
 
+static void test_expression_operators(void)
+{
+    const char *src =
+        "EQU N 4\n"
+        "EQU BASE 0x10\n"
+        "PUSH N*2 + (BASE-8)\n"
+        "PUSH 1 << 4 | 3\n"
+        "PUSH 0xF0 & 0x3C\n"
+        "PUSH (7 >= 7) + (3 < 2)\n"
+        "PUSH 1 & 2 == 0\n"
+        "PUSH 1 | 2 & 4\n"
+        "ADD\nADD\nADD\nADD\nADD\nHALT\n";
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    CHECK(inst_count(&prog) == 12u);
+    if (prog.len > 0u) {
+        CHECK(arg_at(&prog, 0) == 16);
+        CHECK(arg_at(&prog, 1) == 19);
+        CHECK(arg_at(&prog, 2) == 0x30);
+        CHECK(arg_at(&prog, 3) == 1);
+        CHECK(arg_at(&prog, 4) == 0);
+        CHECK(arg_at(&prog, 5) == 1);
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 1u && vm.stack[0] == 85);
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+}
+
+static void test_conditionals(void)
+{
+    const char *src =
+        "EQU N 2\n"
+        "IF N > 1\n"
+        "  PUSH 10\n"
+        "ELSE\n"
+        "  PUSH 99\n"
+        "ENDIF\n"
+        "IFDEF N\n"
+        "  PUSH 20\n"
+        "ENDIF\n"
+        "IFNDEF MISSING\n"
+        "  PUSH 30\n"
+        "ENDIF\n"
+        "IF 0\n"
+        "  FOO 1\n"
+        "  skipped: HALT\n"
+        "ENDIF\n"
+        "ADD\nADD\nHALT\n";
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    CHECK(inst_count(&prog) == 6u);
+    if (prog.len > 0u) {
+        CHECK(arg_at(&prog, 0) == 10);
+        CHECK(arg_at(&prog, 1) == 20);
+        CHECK(arg_at(&prog, 2) == 30);
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 1u && vm.stack[0] == 60);
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+
+    CHECK(asm_parse_string(&prog,
+        "IF 0\nEQU X 1\nskipped: FOO\nENDIF\n"
+        "IFDEF X\nFOO\nENDIF\nHALT\n") == 0);
+    asm_program_free(&prog);
+
+    expect_error("IF 1\nPUSH 1\n", 1, "unterminated IF");
+    expect_error("ELSE\nHALT\n", 1, "ELSE without IF");
+    expect_error("IF 0\nELSE\nELSE\nENDIF\nHALT\n", 3, "duplicate ELSE");
+}
+
+static void test_macros(void)
+{
+    const char *src =
+        "MACRO PUSH2 a, b\n"
+        "  PUSH %a\n"
+        "  PUSH %b\n"
+        "  ADD\n"
+        "ENDMACRO\n"
+        "MACRO SKIP_IF_ZERO n\n"
+        "  PUSH %1\n"
+        "  JMP_Z %%done\n"
+        "  %%done:\n"
+        "ENDMACRO\n"
+        "PUSH2 20, 22\n"
+        "PUSH2 1, 2\n"
+        "ADD\n"
+        "SKIP_IF_ZERO 0\n"
+        "SKIP_IF_ZERO 1\n"
+        "HALT\n";
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    CHECK(inst_count(&prog) == 12u);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 1u && vm.stack[0] == 45);
+        vm_free(&vm);
+        CHECK(asm_line_of(&prog, VM_IMAGE_START + inst_offset(&prog, 0)) == 11u);
+        CHECK(asm_line_of(&prog, VM_IMAGE_START + inst_offset(&prog, 6)) == 13u);
+        CHECK(asm_line_of(&prog, VM_IMAGE_START + inst_offset(&prog, 7)) == 14u);
+    }
+    asm_program_free(&prog);
+
+    const char *nested =
+        "MACRO INNER n\n"
+        "  PUSH %n\n"
+        "  IF %n > 0\n"
+        "    PUSH 1\n"
+        "  ELSE\n"
+        "    PUSH 2\n"
+        "  ENDIF\n"
+        "  ADD\n"
+        "ENDMACRO\n"
+        "MACRO OUTER n\n"
+        "  INNER %1\n"
+        "ENDMACRO\n"
+        "OUTER 3\n"
+        "OUTER 0\n"
+        "ADD\n"
+        "HALT\n";
+    CHECK(asm_parse_string(&prog, nested) == 0);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 1u && vm.stack[0] == 6);
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+
+    expect_error("MACRO M a\nPUSH %a\nENDMACRO\nM 1, 2\nHALT\n",
+                 4, "expects 1 argument");
+    expect_error("MACRO M a\nPUSH %b\nENDMACRO\nM 1\nHALT\n",
+                 2, "unknown macro parameter");
+    expect_error("MACRO HALT a\nNOP\nENDMACRO\nHALT\n",
+                 1, "reserved macro name");
+    expect_error("MACRO M\nNOP\n", 1, "unterminated MACRO");
+}
+
+static void write_temp(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    if (!f) return;
+    fputs(text, f);
+    fclose(f);
+}
+
+static void test_includes(void)
+{
+    const char *lib = "build/asm_inc_lib.asm";
+    const char *main_path = "build/asm_inc_main.asm";
+    write_temp(lib,
+        "EQU LIB_VALUE 7\n"
+        "MACRO INC_BY n\n"
+        "  PUSH %n\n"
+        "  ADD\n"
+        "ENDMACRO\n");
+    write_temp(main_path,
+        "INCLUDE \"asm_inc_lib.asm\"\n"
+        "PUSH LIB_VALUE\n"
+        "INC_BY 5\n"
+        "HALT\n");
+
+    AsmProgram prog;
+    CHECK(asm_parse_file(&prog, main_path) == 0);
+    CHECK(inst_count(&prog) == 4u);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 1u && vm.stack[0] == 12);
+        vm_free(&vm);
+        CHECK(asm_line_of(&prog, VM_IMAGE_START + inst_offset(&prog, 1)) == 3u);
+    }
+    asm_program_free(&prog);
+
+    const char *bad_lib = "build/asm_inc_bad.asm";
+    const char *bad_main = "build/asm_inc_bad_main.asm";
+    write_temp(bad_lib, "FOO 1\n");
+    write_temp(bad_main, "INCLUDE \"asm_inc_bad.asm\"\nHALT\n");
+    CHECK(asm_parse_file(&prog, bad_main) == -1);
+    CHECK(strstr(prog.error, "asm_inc_bad.asm:1") != NULL);
+    CHECK(strstr(prog.error, "unknown instruction") != NULL);
+    asm_program_free(&prog);
+
+    const char *cycle = "build/asm_inc_cycle.asm";
+    write_temp(cycle, "INCLUDE \"asm_inc_cycle.asm\"\nHALT\n");
+    CHECK(asm_parse_file(&prog, cycle) == -1);
+    CHECK(strstr(prog.error, "include cycle") != NULL);
+    asm_program_free(&prog);
+
+    const char *missing = "build/asm_inc_missing_main.asm";
+    write_temp(missing, "INCLUDE \"no_such_file.asm\"\nHALT\n");
+    CHECK(asm_parse_file(&prog, missing) == -1);
+    CHECK(strstr(prog.error, "cannot open include") != NULL);
+    asm_program_free(&prog);
+
+    /* Relative includes resolve against the including file's directory. */
+    const char *sub_dir = "build/asm_inc_sub";
+    const char *nested_main = "build/asm_inc_sub/main.asm";
+    (void)mkdir(sub_dir, 0755);
+    write_temp(nested_main,
+        "INCLUDE \"../asm_inc_lib.asm\"\n"
+        "PUSH LIB_VALUE\n"
+        "INC_BY 5\n"
+        "HALT\n");
+    CHECK(asm_parse_file(&prog, nested_main) == 0);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 1u && vm.stack[0] == 12);
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+
+    remove(nested_main);
+    rmdir(sub_dir);
+    remove(lib);
+    remove(main_path);
+    remove(bad_lib);
+    remove(bad_main);
+    remove(cycle);
+    remove(missing);
+}
+
 static void test_errors(void)
 {
     expect_error("FOO 1\n", 1, "unknown instruction");
@@ -383,6 +613,10 @@ int test_asm(void)
     test_new_opcodes();
     test_extended_opcodes();
     test_expressions_and_constants();
+    test_expression_operators();
+    test_conditionals();
+    test_macros();
+    test_includes();
     test_pseudo_ops();
     test_console_pseudo_ops();
     test_data_directives();

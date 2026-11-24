@@ -67,11 +67,10 @@ static size_t rom_payload_len(const uint8_t *buf, size_t len)
     return ((size_t)buf[8] << 8) | (size_t)buf[9];
 }
 
-static bool assemble(const uint8_t *source, AsmProgram *program)
+static bool assemble_file(const char *path, AsmProgram *program)
 {
-    if (asm_parse_string(program, (const char *)source) != 0) {
-        fprintf(stderr, "Assembly failed at line %zu: %s\n",
-                program->error_line, program->error);
+    if (asm_parse_file(program, path) != 0) {
+        fprintf(stderr, "Assembly failed: %s\n", program->error);
         asm_program_free(program);
         return false;
     }
@@ -206,12 +205,12 @@ static VmDevice console_device(Console *console)
     return dev;
 }
 
-static VmStatus load_source(VmState *vm, const uint8_t *source,
+static VmStatus load_source(VmState *vm, const char *path,
                             AsmProgram **out_program)
 {
     AsmProgram *program = malloc(sizeof *program);
     if (!program) return VM_ERR_HEAP_OVERFLOW;
-    if (!assemble(source, program)) {
+    if (!assemble_file(path, program)) {
         free(program);
         return VM_ERR_BAD_OP;
     }
@@ -270,7 +269,7 @@ static bool run_handler(void *context)
         st = vm_load_rom(&vm, filebuf, filelen);
         if (st == VM_OK) INFO("Loaded ROM %s (%zu bytes)", c->file, filelen);
     } else {
-        st = load_source(&vm, filebuf, &program);
+        st = load_source(&vm, c->file, &program);
         if (st == VM_OK)
             INFO("Loaded %s (%zu payload bytes)", c->file, program->len);
     }
@@ -320,7 +319,7 @@ static bool build_handler(void *context)
     }
 
     AsmProgram program;
-    if (!assemble(source, &program)) {
+    if (!assemble_file(c->file, &program)) {
         free(source);
         return false;
     }
@@ -355,7 +354,7 @@ static bool dis_handler(void *context)
         st = vm_load_rom(&vm, filebuf, filelen);
         payload_len = rom_payload_len(filebuf, filelen);
     } else {
-        st = load_source(&vm, filebuf, &program);
+        st = load_source(&vm, c->file, &program);
         payload_len = program ? program->len : 0u;
     }
     free(filebuf);

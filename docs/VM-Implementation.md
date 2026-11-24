@@ -351,9 +351,40 @@ names.
 
 `PUSH`, `ENTER`, `LOCAL_GET`/`SET`, `CALL`, jump targets, `DEI`/`DEO` ports, and
 numeric data values accept integer expressions: decimal or `0x` hex literals,
-`+ - ~`, `+ - * / %`, parentheses, and previously defined constants. `EQU name
-expr` defines a constant. Arithmetic wraps in `uint64_t`; division by zero is an
-error; and `-9223372036854775808` is accepted as `INT64_MIN`.
+unary `+ - ~`, binary `+ - * / % << >> & ^ | == != < <= > >=` (C-like
+precedence), parentheses, and previously defined constants. `EQU name expr`
+defines a constant. Arithmetic wraps in `uint64_t`; division by zero is an
+error; shifts of 64 or more yield zero; and `-9223372036854775808` is accepted
+as `INT64_MIN`.
+
+### Includes, conditionals, and macros
+
+These directives are expanded entirely in the assembler; they emit no VM
+opcode and require no changes to the ROM header, RAM map, or device ports.
+
+- `INCLUDE "path"` inserts another source file. Relative paths resolve against
+  the including file's directory; absolute paths are used as-is. Includes may
+  nest up to 32 levels, and cycles are rejected. Diagnostics inside included
+  files use `file:line:` prefixes.
+- `IF expr` / `IFDEF name` / `IFNDEF name`, with optional `ELIF expr` and
+  `ELSE`, are closed by `ENDIF`. `IF`/`ELIF` expressions use the same
+  constant-only expression grammar as operands; `IFDEF`/`IFNDEF` test whether
+  a constant or macro name is defined. Inactive branches are skipped but still
+  parsed for balanced directives, so they cannot define constants, labels, or
+  macros.
+- `MACRO name p1, p2, ...` ... `ENDMACRO` (or `ENDM`) defines a reusable body.
+  Parameters are referenced as `%1`, `%2`, ... or `%p1`, `%p2`, ...; `%%`
+  expands to a unique prefix, which makes macro-local labels safe to repeat:
+  `%%done:` and `JMP %%done`. Macro names are case-insensitive and may not
+  shadow instructions, pseudo-ops, or directives. Invocation is `name arg1,
+  arg2, ...` with exactly the declared number of arguments; commas inside
+  quotes or parentheses stay within one argument. Nesting is limited to 32
+  levels, and recursion is rejected by that limit.
+
+`AsmProgram.lines` records the line of the original call site for instructions
+and data emitted from a macro, and the real line inside an included file for
+included source. Errors report the innermost source path when one is
+available.
 
 ### Image layout and data directives
 

@@ -139,7 +139,9 @@ from the stack.
 
 `PRINT`, `FPRINT`, `PRINT_STR`, `PRINT_CHAR`, `READ_INT`, and `READ_STR` are
 **assembler pseudo-ops**, not opcodes. They expand to device port accesses in
-the payload.
+the payload. The same applies to source-level `INCLUDE`, `IF`/`IFDEF`/`IFNDEF`,
+and `MACRO` directives: they are processed by the assembler and emit no
+instruction, opcode, device port, or ROM header change.
 
 ## 7. Reset and halt
 
