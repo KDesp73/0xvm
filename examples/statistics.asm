@@ -15,7 +15,6 @@
 ;     50
 ;     1
 ;
-; Everything mutable stays inside VmState; this program never yields.
 ; =============================================================================
 
 ; -----------------------------------------------------------------------------
@@ -370,8 +369,6 @@ print_full:
     PUSH        BASE+O_MIN
     LOAD32
     PRINT
-
-    MIGRATE ;; WARNING
 
     PUSH        S_MAX
     PUSH        SLEN_MAX

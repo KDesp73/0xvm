@@ -4,7 +4,7 @@
 
 int main(void)
 {
-    int failures = test_asm() + test_vm() + test_net();
+    int failures = test_asm() + test_vm();
 
     if (failures) {
         fprintf(stderr, "%d test check(s) failed\n", failures);

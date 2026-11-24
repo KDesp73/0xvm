@@ -1,4 +1,4 @@
-; Accumulator demo: print 0..5, migrate once, then print the total (60).
+; Accumulator demo: print 0..5, then print the total (60).
 ; Comments start with ';', '#', or '//'. Labels are resolved to instruction indices.
 
         PUSH 0          ; initial accumulator value
@@ -28,7 +28,6 @@ loop:
         JMP loop
 
 done:
-        MIGRATE         ; yield here, serialize, resume on the next node
         PUSH 0
         LOAD32
         PRINT           ; print 60

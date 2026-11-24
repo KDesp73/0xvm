@@ -1,7 +1,6 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "tests.h"
@@ -432,161 +431,6 @@ static void test_error_atomicity(void)
     vm_free(&packed);
 }
 
-static void test_migrate_resume(void)
-{
-    const VmInst p[] = {
-        {OP_PUSH, 1}, {OP_PUSH, 2}, {OP_MIGRATE, 0}, {OP_ADD, 0}, {OP_HALT, 0}
-    };
-    VmState a;
-    vm_init(&a);
-    CHECK(vm_run(&a, p, NELEMS(p), 0) == VM_YIELD_MIGRATE);
-    CHECK(a.ip == 3u && a.sp == 2u && a.ticks == 3u);
-
-    size_t need = vm_serialize(&a, NULL, 0);
-    CHECK(need > 0u);
-    uint8_t *wire = malloc(need);
-    CHECK(wire != NULL);
-    if (wire) {
-        size_t n = vm_serialize(&a, wire, need);
-        CHECK(n == need);
-        VmState b;
-        vm_init(&b);
-        CHECK(vm_deserialize(&b, wire, n) == 0);
-        CHECK(same_state(&a, &b));
-
-        CHECK(vm_run(&b, p, NELEMS(p), 0) == VM_HALTED);
-        CHECK(b.sp == 1u && b.stack[0] == 3 && b.ticks == 5u);
-        vm_free(&b);
-        free(wire);
-    }
-    vm_free(&a);
-}
-
-static void write_be32(uint8_t *dst, uint32_t v)
-{
-    dst[0] = (uint8_t)(v >> 24);
-    dst[1] = (uint8_t)(v >> 16);
-    dst[2] = (uint8_t)(v >> 8);
-    dst[3] = (uint8_t)v;
-}
-
-static void write_be64(uint8_t *dst, uint64_t v)
-{
-    for (int i = 0; i < 8; i++) {
-        dst[i] = (uint8_t)((v >> (56 - 8 * i)) & 0xFFu);
-    }
-}
-
-static void test_serialization(void)
-{
-    VmState a;
-    vm_init(&a);
-    const VmInst alloc[] = {{OP_PUSH, 8}, {OP_ALLOC, 0}, {OP_POP, 0}, {OP_HALT, 0}};
-    CHECK(vm_run(&a, alloc, NELEMS(alloc), 0) == VM_HALTED);
-    a.ip = 5; a.sp = 3; a.ticks = 42;
-    a.stack[0] = INT64_MIN; a.stack[1] = 0; a.stack[2] = INT64_MAX;
-    for (uint32_t i = 0; i < a.hp; i++) a.heap[i] = (uint8_t)(i * 7u);
-
-    size_t exact = vm_serialize(&a, NULL, 0);
-    CHECK(exact == VM_WIRE_HEADER_BYTES + 3u * 8u + 4u /* fsp */ +
-          4u /* block count */ + 17u + 8u);
-
-    uint8_t wire[256];
-    CHECK(vm_serialize(&a, wire, exact - 1u) == 0u);
-    CHECK(vm_serialize(&a, wire, exact) == exact);
-
-    VmState b;
-    vm_init(&b);
-    CHECK(vm_deserialize(&b, wire, exact) == 0);
-    CHECK(same_state(&a, &b));
-
-    CHECK(vm_deserialize(&b, wire, exact - 1u) == -1);
-    CHECK(vm_deserialize(&b, wire, VM_WIRE_HEADER_BYTES - 1u) == -1);
-
-    /* A minimal valid state still carries fsp and block-count fields. */
-    uint8_t bad[VM_WIRE_HEADER_BYTES + 16u] = {0};
-    write_be32(bad, VM_MAGIC);
-    bad[4] = VM_VERSION;
-    CHECK(vm_deserialize(&b, bad, sizeof bad) == 0);
-    bad[4] = VM_VERSION + 1u;
-    CHECK(vm_deserialize(&b, bad, sizeof bad) == -1);
-    bad[4] = VM_VERSION;
-    bad[0] = 0;
-    CHECK(vm_deserialize(&b, bad, sizeof bad) == -1);
-    write_be32(bad, VM_MAGIC);
-
-    bad[5] = 0x80; /* unknown flag */
-    CHECK(vm_deserialize(&b, bad, sizeof bad) == -1);
-    bad[5] = 0;
-    bad[6] = 1; /* reserved must be zero */
-    CHECK(vm_deserialize(&b, bad, sizeof bad) == -1);
-    bad[6] = 0;
-    write_be32(bad + 12, VM_STACK_INIT_CAP + 1u);
-    CHECK(vm_deserialize(&b, bad, sizeof bad) != 0);
-    write_be32(bad + 12, 0);
-    write_be64(bad + 16, UINT64_MAX);
-    CHECK(vm_deserialize(&b, bad, sizeof bad) == -1);
-
-    vm_free(&a);
-    vm_free(&b);
-}
-
-static void test_diff_serialization(void)
-{
-    VmState a, base, restored;
-    vm_init(&a);
-    vm_init(&base);
-    vm_init(&restored);
-
-    const VmInst alloc[] = {
-        {OP_PUSH, 8192}, {OP_ALLOC, 0}, {OP_POP, 0}, {OP_HALT, 0}
-    };
-    CHECK(vm_run(&a, alloc, NELEMS(alloc), 0) == VM_HALTED);
-    for (uint64_t i = 0; i < a.hp; i++) a.heap[i] = (uint8_t)i;
-    CHECK(vm_clone(&a, &base) == 0);
-    a.heap[5000] = 0xA5; /* dirty page 1 only */
-
-    size_t full = vm_serialize(&a, NULL, 0);
-    size_t need = vm_serialize_diff(&a, &base, NULL, 0);
-    CHECK(need > 0u && need < full);
-    CHECK(need == VM_WIRE_HEADER_BYTES + 4u /* fsp */ + 4u /* block count */ +
-          17u + 4u /* changed count */ + 4u /* page index */ + VM_PAGE_SIZE);
-
-    uint8_t *wire = malloc(need);
-    CHECK(wire != NULL);
-    if (wire) {
-        CHECK(vm_serialize_diff(&a, &base, wire, need) == need);
-        CHECK(wire[5] == VM_FLAG_DIRTY);
-        CHECK(vm_deserialize_diff(&restored, &base, wire, need) == 0);
-        CHECK(same_state(&a, &restored));
-
-        VmState rejected;
-        vm_init(&rejected);
-        CHECK(vm_deserialize(&rejected, wire, need) == -1);
-        CHECK(rejected.ip == 0u && rejected.hp == 0u);
-        vm_free(&rejected);
-        free(wire);
-    }
-
-    vm_free(&a);
-    vm_free(&base);
-    vm_free(&restored);
-}
-
-static void test_clone(void)
-{
-    VmState a, b;
-    vm_init(&a);
-    vm_init(&b);
-    const VmInst p[] = {{OP_PUSH, 4}, {OP_ALLOC, 0}, {OP_HALT, 0}};
-    CHECK(vm_run(&a, p, NELEMS(p), 0) == VM_HALTED);
-    CHECK(vm_clone(&a, &b) == 0);
-    CHECK(same_state(&a, &b));
-    vm_free(&a);
-    CHECK(b.sp == 1u && b.hp == 4u && b.heap != NULL);
-    vm_free(&b);
-}
-
 static void test_io(void)
 {
     /* Keep stdout quiet: only exercise the opcodes' state transitions. */
@@ -612,15 +456,13 @@ static void test_demo_control_flow(void)
         {OP_PUSH, 0}, {OP_LOAD32, 0}, {OP_DUP, 0}, {OP_PUSH, 10}, {OP_ADD, 0},
         {OP_PUSH, 0}, {OP_STORE32, 0}, {OP_POP, 0},
         {OP_PUSH, 1}, {OP_ADD, 0}, {OP_JMP, 5},
-        {OP_MIGRATE, 0},
         {OP_PUSH, 0}, {OP_LOAD32, 0}, {OP_HALT, 0}
     };
     VmState vm;
     vm_init(&vm);
 
-    CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_YIELD_MIGRATE);
-    CHECK(vm.ip == 23u && vm.sp == 1u && vm.hp == 4u && heap_i32(&vm, 0) == 60);
     CHECK(vm_run(&vm, p, NELEMS(p), 0) == VM_HALTED);
+    CHECK(vm.hp == 4u && heap_i32(&vm, 0) == 60);
     CHECK(vm.sp == 2u && vm.stack[0] == 6 && vm.stack[1] == 60);
     vm_free(&vm);
 }
@@ -641,10 +483,6 @@ int test_vm(void)
     test_calls_and_locals();
     test_floats();
     test_error_atomicity();
-    test_migrate_resume();
-    test_serialization();
-    test_diff_serialization();
-    test_clone();
     test_io();
     test_demo_control_flow();
     return failures;

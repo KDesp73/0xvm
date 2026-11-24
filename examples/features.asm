@@ -1,5 +1,5 @@
 ; Demonstrates constants/expressions, data directives, procedures with locals,
-; floats, host I/O, and a migrating value.
+; floats, and host I/O.
 ;
 ; The data section is loaded into the heap at address 0 by an automatic
 ; prologue, so the string lives at 0..5 and the 64-bit value at 8..15.
@@ -38,9 +38,8 @@ FMUL
 DUP
 FPRINT               ; leaves the raw bits on the stack
 
-; Everything above (heap, stack, locals, frames) crosses the wire here.
+; A last integer calculation on the value 41.
 PUSH 41
-MIGRATE
 PUSH 1
 ADD
 PRINT                ; 42

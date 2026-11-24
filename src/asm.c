@@ -84,7 +84,6 @@ static const OpDef OPS[] = {
     {"LOAD32",  OP_LOAD32,   OPR_NONE},
     {"STORE32", OP_STORE32,  OPR_NONE},
     {"PRINT",   OP_PRINT,    OPR_NONE},
-    {"MIGRATE", OP_MIGRATE,  OPR_NONE},
     {"DIV",     OP_DIV,      OPR_NONE},
     {"MOD",     OP_MOD,      OPR_NONE},
     {"CMP_EQ",  OP_CMP_EQ,   OPR_NONE},

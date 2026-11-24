@@ -4,18 +4,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/*
- * Wire v3. The v2 format (28-byte header, stack, heap) is retired by this
- * prototype; vm_deserialize() accepts only VM_VERSION. Every piece of mutable
- * state -- including the operand stack, call frames, and allocator metadata --
- * is serialized, so migration remains lossless.
- */
-#define VM_VERSION          3u
-#define VM_MAGIC            0x564D4D47u /* "VMMG" */
-#define VM_WIRE_HEADER_BYTES 32u
-#define VM_FLAG_DIRTY       0x01u       /* heap payload is a page-level diff */
-#define VM_PAGE_SIZE        4096u
-
 #define VM_STACK_INIT_CAP   256u
 #define VM_STACK_CAP        VM_STACK_INIT_CAP /* legacy alias for the initial capacity */
 #define VM_FRAME_INIT_CAP   64u
@@ -38,7 +26,6 @@ typedef enum {
     OP_LOAD32,    /* pops addr, pushes sign-extended int32 from heap */
     OP_STORE32,   /* pops addr (top), pops val, writes low 32 bits */
     OP_PRINT,     /* pops val (int64_t), prints it */
-    OP_MIGRATE,   /* yields VM_YIELD_MIGRATE at clean instruction boundary */
 
     /* Arithmetic extension. All binary ops pop b (top) then a. */
     OP_DIV,       /* a / b, truncated toward zero; INT64_MIN / -1 wraps */
@@ -58,7 +45,7 @@ typedef enum {
     OP_LAND,      /* logical AND: (a != 0) && (b != 0) */
     OP_LOR,       /* logical OR: (a != 0) || (b != 0) */
 
-    /* Stack shuffling: no wire-format cost beyond the live stack slots. */
+    /* Stack shuffling */
     OP_SWAP,      /* [..., a, b] -> [..., b, a] */
     OP_OVER,      /* [..., a, b] -> [..., a, b, a] */
     OP_ROT,       /* [..., a, b, c] -> [..., b, c, a] */
@@ -73,7 +60,7 @@ typedef enum {
     OP_LOAD64,    /* pops addr, pushes int64_t (raw bits) */
     OP_STORE64,   /* pops addr (top), pops val, writes all 64 bits */
 
-    /* Heap reuse. Allocator metadata lives in VmState and is serialized. */
+    /* Heap reuse. Allocator metadata lives in VmState. */
     OP_FREE,      /* pops addr; returns its block to the free list */
 
     /* Procedures. CALL pushes {return ip, frame pointer}; RET pops it. */
@@ -121,7 +108,6 @@ typedef struct {
 typedef enum {
     VM_OK = 0,
     VM_HALTED,
-    VM_YIELD_MIGRATE,
     VM_ERR_BAD_IP,
     VM_ERR_BAD_OP,
     VM_ERR_STACK_OVERFLOW,
@@ -131,8 +117,7 @@ typedef enum {
     VM_ERR_DIV_ZERO,
     VM_ERR_IO,
     VM_ERR_BAD_FRAME,
-    VM_ERR_BAD_LOCAL,
-    VM_ERR_PAYLOAD     /* malformed wire payload */
+    VM_ERR_BAD_LOCAL
 } VmStatus;
 
 typedef struct {
@@ -168,30 +153,15 @@ typedef struct {
 void vm_init(VmState *vm);
 /* Releases every owned buffer and resets the state. Safe on a zeroed/freed state. */
 void vm_free(VmState *vm);
-/* Deep copy of all live state. Returns 0 on success, -1 on allocation failure. */
-int  vm_clone(const VmState *src, VmState *out);
 
 VmStatus vm_step(VmState *vm, const VmInst *prog, size_t prog_len);
 VmStatus vm_run(VmState *vm, const VmInst *prog, size_t prog_len, uint32_t max_steps);
-
-/* Full-snapshot wire format (flags = 0): header, stack, frames, blocks, heap.
- * If buf is NULL, returns the required buffer size without writing. Returns 0
- * on invalid state or insufficient capacity. */
-size_t vm_serialize(const VmState *vm, uint8_t *buf, size_t buf_cap);
-int    vm_deserialize(VmState *out, const uint8_t *buf, size_t buf_len);
-
-/* Page-level diff against `base`. Only changed 4 KiB heap pages are carried,
- * with VM_FLAG_DIRTY set in the header. All other state is always included. */
-size_t vm_serialize_diff(const VmState *vm, const VmState *base,
-                         uint8_t *buf, size_t buf_cap);
-int    vm_deserialize_diff(VmState *out, const VmState *base,
-                           const uint8_t *buf, size_t buf_len);
 
 const char *vm_status_str(VmStatus status);
 const char *vm_opcode_name(uint8_t op);
 
 /* When enabled, PRINT/FPRINT/PRINT_STR prefix program output with the current
- * tick count. This is host output policy, not migratable VM state. */
+ * tick count. This is host output policy only. */
 void vm_set_debug_ticks(int enabled);
 
 /* IEEE-754 bit conversion helpers (memcpy-based, no strict-aliasing UB). */

@@ -1,6 +1,7 @@
-# process-migration
+# vm
 
-> A small C stack VM built to study lossless execution migration.
+> A small C stack VM. 
+> Originally developed as an experiment on process migration for my PhD research.
 > Written by KDesp73 (Konstantinos Despoinidis)
 
 ## Build
@@ -16,6 +17,10 @@ make test        # build and run the test suite (ASan/UBSan in DEBUG builds)
 ./build/vm-cli run -f examples/counter.asm
 ./build/vm-cli -t run -f examples/gcd.asm     # -t traces ip/source line/opcode
 ```
+
+Flags: `-f/--file` selects the source file, `-t/--trace` prints each executed
+instruction with its source line, `-D/--debug` prefixes program output with
+`[vm tick=N]`, `-v/--version` prints the version, and `-h/--help` prints usage.
 
 One instruction per line; mnemonics are case-insensitive. Labels are written
 `name:` (optionally followed by an instruction on the same line) and are
@@ -53,7 +58,7 @@ index back to its source line, which is what `-t` uses in its trace output.
 ### Instruction groups
 
 - **Core:** `HALT`, `NOP`, `PUSH`, `POP`, `DUP`, `ADD`, `SUB`, `MUL`, `CMP_LT`,
-  `JMP`, `JMP_Z`, `ALLOC`, `LOAD32`, `STORE32`, `PRINT`, `MIGRATE`.
+  `JMP`, `JMP_Z`, `ALLOC`, `LOAD32`, `STORE32`, `PRINT`.
 - **Arithmetic & logic:** `DIV`, `MOD`, all `CMP_*`, `AND`/`OR`/`XOR`/`NOT`,
   `SHL`/`SHR`, `LNOT`/`LAND`/`LOR`.
 - **Stack shuffling:** `SWAP`, `OVER`, `ROT`, `PICK`.
@@ -69,52 +74,18 @@ All heap addresses are 64-bit offsets; multi-byte heap values use big-endian
 byte order. `ALLOC` returns a heap offset and the heap grows on demand. The
 operand stack and call-frame stacks grow on demand too.
 
-`./build/vm-cli -f examples/features.asm run` exercises data directives,
+`./build/vm-cli run -f examples/features.asm` exercises data directives,
 constants, procedures/locals, floats, and I/O in one program.
 
-`examples/statistics.asm` is a complete, migration-free tool: it reads a count,
-then that many integers, then a report mode (`0` short, `1` full), and prints
-min, max, sum, mean, variance, and standard deviation. It uses a heap array,
-free-list reuse, two procedures with locals, floating-point arithmetic, and an
-indirect `CALL_I` dispatch table:
+`examples/statistics.asm` is a complete tool: it reads a count, then that many
+integers, then a report mode (`0` short, `1` full), and prints min, max, sum,
+mean, variance, and standard deviation. It uses a heap array, free-list reuse,
+two procedures with locals, floating-point arithmetic, and an indirect `CALL_I`
+dispatch table:
 
 ```sh
-printf '5\n10\n20\n30\n40\n50\n1\n' | ./build/vm-cli -f examples/statistics.asm run
+printf '5\n10\n20\n30\n40\n50\n1\n' | ./build/vm-cli run -f examples/statistics.asm
 ```
 
-## Migration
-
-`MIGRATE` yields at a clean instruction boundary. The runtime serializes the
-**entire** mutable VM state — registers, operand stack, call frames, allocator
-metadata, and live heap bytes — so execution resumes losslessly. Program code is
-not part of the state; both sides load the same source file.
-
-| Command | Role |
-| --- | --- |
-| `run` | Run locally; `MIGRATE` is handled as an in-process serialize/deserialize round trip |
-| `listen` | Wait for a peer, restore the initial state, and keep exchanging until the VM halts |
-| `connect` | Connect to a listener, run until `MIGRATE`, and hand off state |
-
-The TCP handoff is **multi-hop**: each `MIGRATE` after a restore is forwarded to
-the peer, so peers alternate execution until `HALT`. A zero-length frame is a
-graceful "peer halted" signal so the idle side exits cleanly.
-
-```sh
-# Terminal 1 (destination)
-./build/vm-cli -P 43210 -f examples/transform-migrate.asm listen
-
-# Terminal 2 (source)
-./build/vm-cli -P 43210 -f examples/transform-migrate.asm connect
-```
-
-Flags: `-S/--socket` sets the bind/connect address (default `127.0.0.1`),
-`-P/--port` is required for `listen`/`connect`, `-t/--trace` prints each
-executed instruction with its source line, `-D/--debug` prefixes program output
-with `[vm tick=N]` (off by default), and `-d/--diff` sends full state on the
-first hop and page-level (4 KiB) heap diffs thereafter. The serialized
-format is wire **v3**: a 32-byte header followed by the live stack, frame count
-and frames, block count and allocator blocks, and heap bytes. Diff payloads set
-`VM_FLAG_DIRTY` and carry only changed heap pages.
-
-See [VM Implementation](docs/VM-Implementation.md) for the exact layout,
-instruction semantics, and error-atomicity rules.
+See [VM Implementation](docs/VM-Implementation.md) for the instruction
+semantics, execution rules, and error-atomicity guarantees.

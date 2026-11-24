@@ -37,7 +37,6 @@ gcd_loop:
         JMP gcd_loop
 
 done:
-        MIGRATE         ; carry the computed result to the destination
         PUSH 0
         LOAD32
         PRINT           ; 21
