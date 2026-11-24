@@ -1,187 +1,90 @@
 # vm
 
 > A small, standalone C stack VM in the spirit of Uxn.
-> Written by KDesp73 (Konstantinos Despoinidis)
 
-The machine is frozen at ABI v2: 64-bit cells, 64 KiB of byte-addressed RAM,
-16-bit byte addresses, one-byte opcodes with fixed immediates, a `VMIM` v2
-binary image format, and a device page for all I/O. See the
-[Machine Contract](docs/Machine-Contract.md) for the ABI.
+The machine is frozen at ABI v2: 64-bit cells, 64 KiB byte-addressed RAM,
+16-bit addresses, byte-encoded instructions, `VMIM` v2 ROMs, and a device page
+for all I/O.
 
 ## Build
 
 ```sh
 make all         # build build/vm-cli and build/vm-test
-make test        # build and run the test suite (ASan/UBSan in DEBUG builds)
+make test        # run the test suite, including a conformance ROM that prints OK
 ```
 
-`make test` also assembles and runs `tests/conformance.asm` from both source and
-a generated ROM, asserting that it prints `OK`.
+## CLI
 
-## Run programs
+```sh
+./build/vm-cli <command> -f <file> [options]
+```
 
-`vm-cli run` accepts either assembly source or a `VMIM` ROM:
+| Command | Purpose |
+| --- | --- |
+| `run` | assemble a source file or load a ROM and execute it |
+| `build` | assemble source into a VMIM ROM (`-o` sets the output path) |
+| `dis` | disassemble source or a ROM from the entry point |
+
+Flags: `-t/--trace` logs address, source line, and opcode; `-D/--debug`
+prefixes Console output with tick numbers; `-v/--version` and `-h/--help`
+print version and usage.
 
 ```sh
 ./build/vm-cli run -f examples/counter.asm
-./build/vm-cli run -f counter.rom
-./build/vm-cli -t run -f examples/gcd.asm     # -t traces address/line/opcode
-./build/vm-cli -D run -f examples/counter.asm # -D prefixes output with tick numbers
-```
-
-`vm-cli build` assembles source into a ROM. With no `-o`, `.asm` is replaced by
-`.rom`:
-
-```sh
+./build/vm-cli -t run -f examples/gcd.asm
 ./build/vm-cli build -f examples/counter.asm -o counter.rom
-```
-
-`vm-cli dis` prints a linear disassembly of a source file or ROM. It starts at
-the entry point, follows the entry `JMP` past static data, and decodes to the end
-of the payload. Reserved bytes are labelled `RESERVED`, and truncated immediates
-are reported as decode errors:
-
-```sh
 ./build/vm-cli dis -f counter.rom
-./build/vm-cli dis -f examples/counter.asm
 ```
 
-Flags: `-f/--file` selects the input file, `-o/--output` sets the ROM output
-path for `build`, `-t/--trace` prints each executed instruction with its source
-line, `-D/--debug` enables the System debug port (the Console device then
-prefixes output with `[vm tick=N]`), `-v/--version` prints the version, and
-`-h/--help` prints usage. Use `run`, `build`, or `dis` as the command.
+## Assembly quick reference
 
-## Assembly model
-
-One instruction per line; mnemonics are case-insensitive. Labels are written
-`name:` (optionally followed by an instruction on the same line) and resolve to
-absolute 16-bit **byte addresses** in VM RAM. Comments start with `;`, `#`, or
-`//` and are ignored inside quoted strings. `JMP`, `JMP_Z`, and `CALL` accept a
-label or an absolute byte address.
-
-Instructions are encoded as a one-byte opcode plus a fixed immediate: 0 bytes
-for most opcodes, 1 byte for locals/`ENTER`/device ports, 2 bytes for direct
-jumps/calls, or 8 bytes for `PUSH`/`PUSHF`. Multi-byte immediates and RAM values
-are **big-endian**.
-
-Operands are **integer expressions**: decimal, `0x`-prefixed hex, unary
-`+ - ~`, binary `+ - * / % << >> & ^ | == != < <= > >=` (C-like precedence),
-parentheses, and constants defined with `EQU name expr`. For example:
+- One instruction per line; mnemonics are case-insensitive.
+- `name:` labels are absolute 16-bit byte addresses and may share a line with
+  an instruction or data directive.
+- Comments start with `;`, `#`, or `//` and are ignored inside quoted strings.
+- Operands are integer expressions: decimal, `0x` hex, constants from
+  `EQU name expr`, and the usual arithmetic, bitwise, and comparison operators.
+  `PUSHF` takes a floating-point literal.
+- Data directives: `DB`, `DW`, `DQ`, `STR`, `ALIGN`. Data lives in the image
+  area and is directly addressable with `LOAD*`/`STORE*`.
 
 ```asm
 EQU N 4
-EQU BASE 16
-PUSH N*2+(BASE-8)
+PUSH N*2
+PRINT
+HALT
 ```
 
-`PUSHF` takes a floating-point literal and emits the raw IEEE-754 bit pattern.
-
-Data directives append bytes to the static-data area of the image, immediately
-after a generated three-byte `JMP` over the data:
+Source-level directives (no VM or ROM changes):
 
 | Directive | Meaning |
 | --- | --- |
-| `DB 1, 2, 0x41` | one byte per expression |
-| `DW expr, ...` | big-endian 16-bit words |
-| `DQ expr, ...` | big-endian 64-bit words |
-| `STR "hi\n"` | quoted string with `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\xNN` escapes |
-| `ALIGN 8` | pad the data area to the requested offset (1..4096) |
+| `INCLUDE "path"` | insert a file; relative paths follow the including file |
+| `IF` / `IFDEF` / `IFNDEF` | conditional assembly; use `ELIF`, `ELSE`, `ENDIF` |
+| `MACRO name p1, ...` / `ENDMACRO` | reusable body; `ENDM` is an alias |
 
-Labels may name data addresses, and `LOAD*`/`STORE*` can read or write the
-image region directly. The image is not copied into the heap. The image starts
-at `0x0100` and is limited to `0x3F00` bytes; `0x0000..0x00FF` is the zero
-page, and `0x4000..0xFFFF` is the heap region.
+Macro parameters are `%1`, `%2`, ... or `%p1`, `%p2`, ...; `%%` expands to a
+unique prefix for macro-local labels. Conditions see constants and defined
+names only. Readable pseudo-ops such as `PRINT`, `PRINT_STR`, `READ_INT`,
+`INC`, `DEC`, `NEG`, `GET`, and `SET` expand to real instructions or device
+accesses. With `-t`, macro-generated bytes report their invocation line.
 
-Source files can be split and reused with assembler-only directives:
+## Examples
 
-| Directive | Meaning |
-| --- | --- |
-| `INCLUDE "path"` | insert a file; relative paths are relative to the including file |
-| `IF expr` / `IFDEF name` / `IFNDEF name` | conditional assembly, with `ELIF expr`, `ELSE`, and `ENDIF` |
-| `MACRO name p1, ...` / `ENDMACRO` | define a macro; `ENDM` is an alias |
-
-Macro arguments are `%1`, `%2`, ... or `%p1`, `%p2`, ...; `%%` becomes a unique
-prefix, so `%%done:` and `JMP %%done` are macro-local and can be reused at every
-call site. Conditions see constants and defined names only, since label
-addresses are not known until the second pass. Includes and macros may nest 32
-deep; include cycles are rejected. These directives are purely source-level and
-do not change the VM, ROM format, or device layer.
-
-Pseudo-ops expand to real instructions: `INC` / `DEC` / `NEG`, and `GET` / `SET`
-are aliases for `LOCAL_GET` / `LOCAL_SET`. `asm_line_of()` maps an absolute RAM
-byte address back to its source line: included source reports its own line,
-while macro-generated bytes report the invocation line. That is what `-t` uses
-in its trace.
-
-### Instruction groups
-
-- **Core:** `HALT`, `NOP`, `PUSH`, `POP`, `DUP`, `ADD`, `SUB`, `MUL`, `CMP_LT`,
-  `JMP`, `JMP_Z` (absolute byte target), `ALLOC`, `LOAD32`, `STORE32`.
-- **Arithmetic & logic:** `DIV`, `MOD`, all `CMP_*`, `AND`/`OR`/`XOR`/`NOT`,
-  `SHL`/`SHR`, `LNOT`/`LAND`/`LOR`.
-- **Stack shuffling:** `SWAP`, `OVER`, `ROT`, `PICK`.
-- **RAM:** `LOAD8`/`STORE8`, `LOAD16`/`STORE16`, `LOAD32U`, `LOAD64`/`STORE64`.
-- **Heap:** `ALLOC` and `FREE` for fixed-capacity block reuse.
-- **Procedures:** `CALL` (label/expression), `CALL_I` (indirect), `RET`,
-  `ENTER n` (reserve locals), `LOCAL_GET`/`LOCAL_SET` (`GET`/`SET`), `JMP_I`.
-- **Floats:** `PUSHF`, `FADD`/`FSUB`/`FMUL`/`FDIV`, `FNEG`/`FABS`/`FSQRT`,
-  `FCMP_*`, `FTOI`/`ITOF`.
-- **Devices:** `DEI port` pushes a cell from a host device; `DEO port` pops a
-  cell into a host device. Ports are 8-bit values outside addressable RAM.
-
-The assembler keeps these readable pseudo-ops, which expand to device port
-accesses:
-
-| Pseudo-op | Effect |
-| --- | --- |
-| `PRINT` / `FPRINT` | signed integer / double to Console |
-| `PRINT_CHAR` | one byte to Console |
-| `PRINT_STR` | RAM bytes at `addr, len` to Console |
-| `READ_INT` | one integer from Console |
-| `READ_STR` | read a line into RAM at `addr, max`, push its length |
-
-The CLI provides System and Console devices:
-
-| Port | Name | Access |
-| --- | --- | --- |
-| `0x00` | `VM_SYS_VERSION` | read ROM format version |
-| `0x01` | `VM_SYS_DEBUG` | read/write tick-prefix flag |
-| `0x02` | `VM_SYS_HALT` | write to halt |
-| `0x10` | `VM_CONSOLE_PUTC` | write one byte |
-| `0x11` | `VM_CONSOLE_GETC` | read one byte |
-| `0x12` | `VM_CONSOLE_PUTI` | write signed decimal + newline |
-| `0x13` | `VM_CONSOLE_PUTF` | write double + newline |
-| `0x14`–`0x16` | `PUTS_ADDR`, `PUTS_LEN`, `PUTS` | write a RAM string + newline |
-| `0x17`–`0x1A` | `GETS_ADDR`, `GETS_MAX`, `GETS`, `GETS_LEN` | read a line into RAM |
-| `0x1B` | `VM_CONSOLE_GETI` | read one integer |
-
-A second host can install different callbacks without changing the VM or ROMs.
-`ALLOC` returns a RAM address starting at `0x4000`. Loads and stores may address
-any byte in RAM; only `ALLOC`/`FREE` are constrained to the heap. The machine
-has fixed capacities: 256 stack cells, 64 call frames, 64 allocator blocks, and
-65536 bytes of RAM. Nothing in the core grows at runtime, and a failed
-instruction leaves all VM state unchanged.
-
-`./build/vm-cli run -f examples/features.asm` exercises data directives,
-constants, procedures/locals, floats, and Console I/O in one program.
-
-`./build/vm-cli run -f examples/asm_ext/main.asm` exercises the assembler
-extensions: nested relative `INCLUDE`, `IF`/`ELIF`/`ELSE`/`IFDEF`/`IFNDEF`, and
-macros with parameters and macro-local labels. It prints `(42` followed by
-countdowns `3 2 1` and `2 1`, then `)`.
-
-`examples/statistics.asm` is a complete tool: it reads a count, then that many
-integers, then a report mode (`0` short, `1` full), and prints min, max, sum,
-mean, variance, and standard deviation. It uses a heap array, free-list reuse,
-two procedures with locals, floating-point arithmetic, and an indirect `CALL_I`
-dispatch table:
+- `examples/counter.asm` — a simple loop.
+- `examples/features.asm` — data, procedures, floats, and Console I/O.
+- `examples/asm_ext/main.asm` — includes, conditionals, and macros.
+- `examples/statistics.asm` — a larger heap-based tool.
 
 ```sh
+./build/vm-cli run -f examples/features.asm
+./build/vm-cli run -f examples/asm_ext/main.asm
 printf '5\n10\n20\n30\n40\n50\n1\n' | ./build/vm-cli run -f examples/statistics.asm
 ```
 
-See [VM Implementation](docs/VM-Implementation.md) for instruction semantics,
-execution rules, and error-atomicity guarantees. The implemented machine ABI —
-memory map, instruction encoding, ROM format, and devices — is in the
-[Machine Contract](docs/Machine-Contract.md).
+## Documentation
+
+- [VM Implementation](docs/VM-Implementation.md) — instruction semantics,
+  assembler details, execution rules, and error atomicity.
+- [Machine Contract](docs/Machine-Contract.md) — frozen ABI, memory map,
+  instruction encodings, ROM format, and devices.
