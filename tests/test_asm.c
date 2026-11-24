@@ -190,23 +190,25 @@ static void test_extended_opcodes(void)
         "LOAD8\nSTORE8\nLOAD16\nSTORE16\nLOAD32U\nLOAD64\nSTORE64\nFREE\n"
         "CALL fn\nCALL_I\nRET\nENTER 2\nGET 0\nSET 1\nJMP_I\n"
         "PUSHF 1.5\nFADD\nFSUB\nFMUL\nFDIV\nFNEG\nFABS\nFSQRT\n"
-        "FCMP_LT\nFCMP_EQ\nFCMP_LE\nFCMP_GT\nFCMP_GE\nFTOI\nITOF\nFPRINT\n"
-        "PRINT_STR\nPRINT_CHAR\nREAD_INT\nREAD_STR\n"
+        "FCMP_LT\nFCMP_EQ\nFCMP_LE\nFCMP_GT\nFCMP_GE\nFTOI\nITOF\n"
+        "DEI 0x1B\nDEO 0x10\n"
         "fn: HALT\n";
     AsmProgram prog;
     CHECK(asm_parse_string(&prog, src) == 0);
-    CHECK(inst_count(&prog) == 40u);
+    CHECK(inst_count(&prog) == 37u);
     if (prog.len > 0u) {
         CHECK(op_at(&prog, 0) == OP_SWAP);
         CHECK(op_at(&prog, 11) == OP_FREE);
         CHECK(op_at(&prog, 12) == OP_CALL &&
-              arg_at(&prog, 12) == (int64_t)(VM_IMAGE_START + inst_offset(&prog, 39)));
+              arg_at(&prog, 12) == (int64_t)(VM_IMAGE_START + inst_offset(&prog, 36)));
         CHECK(op_at(&prog, 15) == OP_ENTER && arg_at(&prog, 15) == 2);
         CHECK(op_at(&prog, 16) == OP_LOCAL_GET && arg_at(&prog, 16) == 0);
         CHECK(op_at(&prog, 17) == OP_LOCAL_SET && arg_at(&prog, 17) == 1);
         CHECK(op_at(&prog, 19) == OP_PUSHF);
         CHECK(vm_bits_to_f64(arg_at(&prog, 19)) == 1.5);
-        CHECK(op_at(&prog, 39) == OP_HALT);
+        CHECK(op_at(&prog, 34) == OP_DEI && arg_at(&prog, 34) == VM_CONSOLE_GETI);
+        CHECK(op_at(&prog, 35) == OP_DEO && arg_at(&prog, 35) == VM_CONSOLE_PUTC);
+        CHECK(op_at(&prog, 36) == OP_HALT);
     }
     asm_program_free(&prog);
 }
@@ -256,6 +258,39 @@ static void test_pseudo_ops(void)
         run_ok(&prog, &vm);
         CHECK(vm.sp == 1u && vm.stack[0] == -5);
         vm_free(&vm);
+    }
+    asm_program_free(&prog);
+}
+
+static void test_console_pseudo_ops(void)
+{
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog,
+        "PUSH 65\nPRINT_CHAR\nPUSH 42\nPRINT\nPUSHF 1.5\nFPRINT\n"
+        "READ_INT\nHALT\n") == 0);
+    CHECK(inst_count(&prog) == 8u);
+    if (prog.len > 0u) {
+        CHECK(op_at(&prog, 1) == OP_DEO && arg_at(&prog, 1) == VM_CONSOLE_PUTC);
+        CHECK(op_at(&prog, 3) == OP_DEO && arg_at(&prog, 3) == VM_CONSOLE_PUTI);
+        CHECK(op_at(&prog, 5) == OP_DEO && arg_at(&prog, 5) == VM_CONSOLE_PUTF);
+        CHECK(op_at(&prog, 6) == OP_DEI && arg_at(&prog, 6) == VM_CONSOLE_GETI);
+    }
+    asm_program_free(&prog);
+
+    CHECK(asm_parse_string(&prog,
+        "PUSH 0x0103\nPUSH 4\nPRINT_STR\n"
+        "PUSH 0x0200\nPUSH 16\nREAD_STR\nHALT\n") == 0);
+    CHECK(inst_count(&prog) == 14u);
+    if (prog.len > 0u) {
+        CHECK(op_at(&prog, 2) == OP_DEO && arg_at(&prog, 2) == VM_CONSOLE_PUTS_LEN);
+        CHECK(op_at(&prog, 3) == OP_DEO && arg_at(&prog, 3) == VM_CONSOLE_PUTS_ADDR);
+        CHECK(op_at(&prog, 4) == OP_PUSH && arg_at(&prog, 4) == 0);
+        CHECK(op_at(&prog, 5) == OP_DEO && arg_at(&prog, 5) == VM_CONSOLE_PUTS);
+        CHECK(op_at(&prog, 8) == OP_DEO && arg_at(&prog, 8) == VM_CONSOLE_GETS_MAX);
+        CHECK(op_at(&prog, 9) == OP_DEO && arg_at(&prog, 9) == VM_CONSOLE_GETS_ADDR);
+        CHECK(op_at(&prog, 10) == OP_PUSH && arg_at(&prog, 10) == 0);
+        CHECK(op_at(&prog, 11) == OP_DEO && arg_at(&prog, 11) == VM_CONSOLE_GETS);
+        CHECK(op_at(&prog, 12) == OP_DEI && arg_at(&prog, 12) == VM_CONSOLE_GETS_LEN);
     }
     asm_program_free(&prog);
 }
@@ -331,6 +366,7 @@ static void test_errors(void)
     expect_error("SET -1\nHALT\n", 1, "invalid local index");
     expect_error("ENTER 256\nHALT\n", 1, "invalid local index");
     expect_error("PUSHF abc\nHALT\n", 1, "invalid float");
+    expect_error("DEI 256\nHALT\n", 1, "invalid port index");
     expect_error("CALL 70000\nHALT\n", 1, "out of range");
 
     AsmProgram prog;
@@ -348,6 +384,7 @@ int test_asm(void)
     test_extended_opcodes();
     test_expressions_and_constants();
     test_pseudo_ops();
+    test_console_pseudo_ops();
     test_data_directives();
     test_line_mapping();
     test_errors();

@@ -635,32 +635,6 @@ static void test_error_atomicity(void)
     vm_free(&packed);
 }
 
-static void test_io(void)
-{
-    /* Keep stdout quiet: only exercise the opcodes' state transitions. */
-    VmState vm;
-    vm_init(&vm);
-    Prog p;
-    p_reset(&p);
-    emit8(&p, OP_PUSH, 4);
-    emit0(&p, OP_ALLOC);
-    emit0(&p, OP_POP);
-    emit8(&p, OP_PUSH, 65);
-    emit8(&p, OP_PUSH, VM_HEAP_START);
-    emit0(&p, OP_STORE8);
-    emit8(&p, OP_PUSH, VM_HEAP_START);
-    emit8(&p, OP_PUSH, 1);
-    emit0(&p, OP_PRINT_STR);
-    emit8(&p, OP_PUSH, 66);
-    emit0(&p, OP_PRINT_CHAR);
-    emit0(&p, OP_HALT);
-    load(&vm, &p);
-    CHECK(vm_run(&vm, 0) == VM_HALTED);
-    CHECK(vm.sp == 0u && vm.hp == VM_HEAP_START + 8u);
-    CHECK(vm.mem[VM_HEAP_START] == 65);
-    vm_free(&vm);
-}
-
 static void test_demo_control_flow(void)
 {
     const uint16_t b = VM_HEAP_START;
@@ -721,7 +695,6 @@ int test_vm(void)
     test_calls_and_locals();
     test_floats();
     test_error_atomicity();
-    test_io();
     test_demo_control_flow();
     return failures;
 }

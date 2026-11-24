@@ -7,5 +7,7 @@ int test_vm(void);
 int test_asm(void);
 /* Runs the VMIM image/loader test cases and returns the number of failed checks. */
 int test_rom(void);
+/* Runs the device-layer test cases and returns the number of failed checks. */
+int test_device(void);
 
 #endif /* TESTS_H */

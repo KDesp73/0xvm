@@ -1,20 +1,8 @@
 #include "vm.h"
 
-#include <errno.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-
-/* Host-side output policy: tick prefixes are off unless explicitly enabled. */
-static int debug_ticks = 0;
-
-void vm_set_debug_ticks(int enabled)
-{
-    debug_ticks = enabled != 0;
-}
 
 static unsigned immediate_size(uint8_t op)
 {
@@ -29,6 +17,8 @@ static unsigned immediate_size(uint8_t op)
         case OP_ENTER:
         case OP_LOCAL_GET:
         case OP_LOCAL_SET:
+        case OP_DEI:
+        case OP_DEO:
             return 1u;
         default:
             return 0u;
@@ -63,7 +53,16 @@ void vm_init(VmState *vm)
 
 void vm_free(VmState *vm)
 {
+    if (!vm) return;
+    VmDevice dev = vm->dev;
     vm_init(vm);
+    vm->dev = dev;
+}
+
+void vm_set_device(VmState *vm, const VmDevice *dev)
+{
+    if (!vm) return;
+    vm->dev = dev ? *dev : (VmDevice){0};
 }
 
 /* ------------------------------------------------------------------- image */
@@ -77,7 +76,9 @@ VmStatus vm_load_image(VmState *vm, const uint8_t *payload,
         (uint32_t)entry >= (uint32_t)VM_IMAGE_START + (uint32_t)payload_len)
         return VM_ERR_BAD_IP;
 
+    VmDevice dev = vm->dev; /* host wiring is not reset state */
     memset(vm, 0, sizeof(*vm));
+    vm->dev = dev;
     memcpy(vm->mem + VM_IMAGE_START, payload, payload_len);
     vm->ip = entry;
     vm->hp = VM_HEAP_START;
@@ -621,93 +622,31 @@ VmStatus vm_step(VmState *vm)
             return VM_OK;
         }
 
-        /* ------------------------------------------------------------- I/O */
+        /* ------------------------------------------------------ device layer */
 
-        case OP_PRINT:
-            st = pop_val(vm, &a);
-            if (st != VM_OK) return st;
-            if (debug_ticks) printf("[vm tick=%" PRIu64 "] ", vm->ticks);
-            printf("%" PRId64 "\n", a);
-            fflush(stdout);
-            vm->ip = next;
-            vm->ticks++;
-            return VM_OK;
-
-        case OP_FPRINT:
-            st = pop_val(vm, &a);
-            if (st != VM_OK) return st;
-            if (debug_ticks) printf("[vm tick=%" PRIu64 "] ", vm->ticks);
-            printf("%.17g\n", vm_bits_to_f64(a));
-            fflush(stdout);
-            vm->ip = next;
-            vm->ticks++;
-            return VM_OK;
-
-        case OP_PRINT_STR: {
-            if (vm->sp < 2u) return VM_ERR_STACK_UNDERFLOW;
-            int64_t len = vm->stack[vm->sp - 1u];
-            a = vm->stack[vm->sp - 2u];
-            if (len < 0 || (uint64_t)len > (uint64_t)VM_RAM_SIZE ||
-                (len > 0 && !mem_range_ok(a, (unsigned)len))) return VM_ERR_BAD_ADDR;
-            vm->sp -= 2u;
-            if (debug_ticks) printf("[vm tick=%" PRIu64 "] ", vm->ticks);
-            if (len > 0u) fwrite(vm->mem + (size_t)a, 1u, (size_t)len, stdout);
-            putchar('\n');
-            fflush(stdout);
+        case OP_DEI: {
+            if (vm->sp >= VM_STACK_SIZE) return VM_ERR_STACK_OVERFLOW;
+            if (!vm->dev.read) return VM_ERR_IO;
+            int64_t value = 0;
+            VmStatus dr = vm->dev.read(vm->dev.ctx, vm, in.arg, &value);
+            if (dr == VM_ERR_IO) return dr;
+            if (dr != VM_OK && dr != VM_HALTED) return VM_ERR_IO;
+            if (dr == VM_HALTED) { vm->ticks++; return VM_HALTED; }
+            vm->stack[vm->sp++] = value;
             vm->ip = next;
             vm->ticks++;
             return VM_OK;
         }
 
-        case OP_PRINT_CHAR:
-            st = pop_val(vm, &a);
-            if (st != VM_OK) return st;
-            fputc((unsigned char)(uint64_t)a, stdout);
-            fflush(stdout);
-            vm->ip = next;
-            vm->ticks++;
-            return VM_OK;
-
-        case OP_READ_INT: {
-            if (vm->sp >= VM_STACK_SIZE) return VM_ERR_STACK_OVERFLOW;
-            char line[128];
-            if (!fgets(line, sizeof line, stdin)) {
-                if (ferror(stdin)) return VM_ERR_IO;
-                line[0] = '\0';
-            }
-            char *end = NULL;
-            errno = 0;
-            long long value = strtoll(line, &end, 10);
-            if (end == line || errno == ERANGE) value = 0;
-            vm->stack[vm->sp++] = (int64_t)value;
-            vm->ip = next;
-            vm->ticks++;
-            return VM_OK;
-        }
-
-        case OP_READ_STR: {
-            if (vm->sp < 2u) return VM_ERR_STACK_UNDERFLOW;
-            int64_t max = vm->stack[vm->sp - 1u];
-            a = vm->stack[vm->sp - 2u];
-            if (max <= 0 || (uint64_t)max > (uint64_t)VM_RAM_SIZE ||
-                !mem_range_ok(a, (unsigned)max)) return VM_ERR_BAD_ADDR;
-            if (vm->sp >= VM_STACK_SIZE) return VM_ERR_STACK_OVERFLOW;
-
-            char *tmp = malloc((size_t)max + 1u);
-            if (!tmp) return VM_ERR_HEAP_OVERFLOW;
-            if (!fgets(tmp, (int)max + 1, stdin)) {
-                if (ferror(stdin)) { free(tmp); return VM_ERR_IO; }
-                tmp[0] = '\0';
-            }
-            size_t len = strlen(tmp);
-            while (len > 0u && (tmp[len - 1u] == '\n' || tmp[len - 1u] == '\r')) {
-                tmp[--len] = '\0';
-            }
-            memcpy(vm->mem + (size_t)a, tmp, len);
-            free(tmp);
-
-            vm->stack[vm->sp - 2u] = (int64_t)len; /* replace addr with length */
+        case OP_DEO: {
+            if (vm->sp == 0u) return VM_ERR_STACK_UNDERFLOW;
+            if (!vm->dev.write) return VM_ERR_IO;
+            int64_t value = vm->stack[vm->sp - 1u];
+            VmStatus dw = vm->dev.write(vm->dev.ctx, vm, in.arg, value);
+            if (dw == VM_ERR_IO) return dw;
+            if (dw != VM_OK && dw != VM_HALTED) return VM_ERR_IO;
             vm->sp--;
+            if (dw == VM_HALTED) { vm->ticks++; return VM_HALTED; }
             vm->ip = next;
             vm->ticks++;
             return VM_OK;
@@ -750,19 +689,30 @@ const char *vm_status_str(VmStatus status)
 
 const char *vm_opcode_name(uint8_t op)
 {
-    static const char *names[OP_COUNT] = {
-        "HALT", "NOP", "PUSH", "POP", "DUP", "ADD", "SUB", "MUL", "CMP_LT",
-        "JMP", "JMP_Z", "ALLOC", "LOAD32", "STORE32", "PRINT",
-        "DIV", "MOD", "CMP_EQ", "CMP_NE", "CMP_LE", "CMP_GT", "CMP_GE",
-        "AND", "OR", "XOR", "NOT", "SHL", "SHR", "LNOT", "LAND", "LOR",
-        "SWAP", "OVER", "ROT", "PICK",
-        "LOAD8", "STORE8", "LOAD16", "STORE16", "LOAD32U", "LOAD64", "STORE64",
-        "FREE", "CALL", "CALL_I", "RET", "ENTER", "LOCAL_GET", "LOCAL_SET",
-        "JMP_I", "PUSHF", "FADD", "FSUB", "FMUL", "FDIV", "FNEG", "FABS",
-        "FSQRT", "FCMP_LT", "FCMP_EQ", "FCMP_LE", "FCMP_GT", "FCMP_GE",
-        "FTOI", "ITOF", "FPRINT", "PRINT_STR", "PRINT_CHAR", "READ_INT",
-        "READ_STR"
+    static const char *names[VM_OPCODE_MAX + 1u] = {
+        [OP_HALT] = "HALT", [OP_NOP] = "NOP", [OP_PUSH] = "PUSH",
+        [OP_POP] = "POP", [OP_DUP] = "DUP", [OP_ADD] = "ADD",
+        [OP_SUB] = "SUB", [OP_MUL] = "MUL", [OP_CMP_LT] = "CMP_LT",
+        [OP_JMP] = "JMP", [OP_JMP_Z] = "JMP_Z", [OP_ALLOC] = "ALLOC",
+        [OP_LOAD32] = "LOAD32", [OP_STORE32] = "STORE32",
+        [OP_DIV] = "DIV", [OP_MOD] = "MOD", [OP_CMP_EQ] = "CMP_EQ",
+        [OP_CMP_NE] = "CMP_NE", [OP_CMP_LE] = "CMP_LE", [OP_CMP_GT] = "CMP_GT",
+        [OP_CMP_GE] = "CMP_GE", [OP_AND] = "AND", [OP_OR] = "OR",
+        [OP_XOR] = "XOR", [OP_NOT] = "NOT", [OP_SHL] = "SHL",
+        [OP_SHR] = "SHR", [OP_LNOT] = "LNOT", [OP_LAND] = "LAND",
+        [OP_LOR] = "LOR", [OP_SWAP] = "SWAP", [OP_OVER] = "OVER",
+        [OP_ROT] = "ROT", [OP_PICK] = "PICK", [OP_LOAD8] = "LOAD8",
+        [OP_STORE8] = "STORE8", [OP_LOAD16] = "LOAD16", [OP_STORE16] = "STORE16",
+        [OP_LOAD32U] = "LOAD32U", [OP_LOAD64] = "LOAD64", [OP_STORE64] = "STORE64",
+        [OP_FREE] = "FREE", [OP_CALL] = "CALL", [OP_CALL_I] = "CALL_I",
+        [OP_RET] = "RET", [OP_ENTER] = "ENTER", [OP_LOCAL_GET] = "LOCAL_GET",
+        [OP_LOCAL_SET] = "LOCAL_SET", [OP_JMP_I] = "JMP_I", [OP_PUSHF] = "PUSHF",
+        [OP_FADD] = "FADD", [OP_FSUB] = "FSUB", [OP_FMUL] = "FMUL",
+        [OP_FDIV] = "FDIV", [OP_FNEG] = "FNEG", [OP_FABS] = "FABS",
+        [OP_FSQRT] = "FSQRT", [OP_FCMP_LT] = "FCMP_LT", [OP_FCMP_EQ] = "FCMP_EQ",
+        [OP_FCMP_LE] = "FCMP_LE", [OP_FCMP_GT] = "FCMP_GT", [OP_FCMP_GE] = "FCMP_GE",
+        [OP_FTOI] = "FTOI", [OP_ITOF] = "ITOF", [OP_DEI] = "DEI", [OP_DEO] = "DEO"
     };
-    if (op >= OP_COUNT) return "UNKNOWN";
+    if (op > VM_OPCODE_MAX || names[op] == NULL) return "RESERVED";
     return names[op];
 }

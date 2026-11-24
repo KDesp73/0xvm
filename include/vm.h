@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct VmState;
+
 /* Fixed machine geometry (see docs/Machine-Contract.md). */
 #define VM_RAM_SIZE        0x10000u  /* 64 KiB, byte addresses 0x0000..0xFFFF */
 #define VM_ZERO_PAGE_SIZE  0x0100u
@@ -13,100 +15,112 @@
 #define VM_STACK_SIZE      256u      /* cells, outside addressable RAM */
 #define VM_FRAME_COUNT     64u
 #define VM_BLOCK_COUNT     64u
+#define VM_DEVICE_COUNT    0x100u    /* 256 ports, outside addressable RAM */
 
 /* ROM header: 16 bytes, big-endian multi-byte fields. */
 #define VM_ROM_HEADER_SIZE 16u
-#define VM_ROM_VERSION     1u
+#define VM_ROM_VERSION     2u
 
+/* Device 0: System. */
+#define VM_SYS_VERSION     0x00u     /* read: ROM format version */
+#define VM_SYS_DEBUG       0x01u     /* read/write: host tick-prefix flag */
+#define VM_SYS_HALT        0x02u     /* write: halt with VM_HALTED */
+
+/* Device 1: Console. */
+#define VM_CONSOLE_PUTC    0x10u     /* write: low byte to stdout */
+#define VM_CONSOLE_GETC    0x11u     /* read: one byte from stdin (0 on EOF) */
+#define VM_CONSOLE_PUTI    0x12u     /* write: signed decimal + newline */
+#define VM_CONSOLE_PUTF    0x13u     /* write: double bits + newline */
+#define VM_CONSOLE_PUTS_ADDR 0x14u  /* write: RAM address of PUTS string */
+#define VM_CONSOLE_PUTS_LEN  0x15u  /* write: length of PUTS string */
+#define VM_CONSOLE_PUTS      0x16u  /* write: string + newline (value ignored) */
+#define VM_CONSOLE_GETS_ADDR 0x17u  /* write: RAM address for GETS input */
+#define VM_CONSOLE_GETS_MAX  0x18u  /* write: maximum GETS length */
+#define VM_CONSOLE_GETS      0x19u  /* write: read a line (value ignored) */
+#define VM_CONSOLE_GETS_LEN  0x1Au  /* read: length from the last GETS */
+#define VM_CONSOLE_GETI      0x1Bu  /* read: one integer from stdin */
+
+/*
+ * Opcode numbers are explicit because retired I/O opcodes stay reserved.
+ * 0x0E and 0x41..0x45 are permanently unassigned; 0x80/0x81 are the device
+ * layer. All other unassigned values are reserved.
+ */
 typedef enum {
-    OP_HALT = 0,
-    OP_NOP,
-    OP_PUSH,      /* 8-byte immediate: int64_t value */
-    OP_POP,
-    OP_DUP,
-    OP_ADD,
-    OP_SUB,
-    OP_MUL,
-    OP_CMP_LT,
-    OP_JMP,       /* 2-byte immediate: absolute byte address */
-    OP_JMP_Z,     /* 2-byte immediate: absolute byte address */
-    OP_ALLOC,     /* pops size (int64_t), pushes heap address (uint16_t) */
-    OP_LOAD32,    /* pops addr, pushes sign-extended int32 from RAM */
-    OP_STORE32,   /* pops addr (top), pops val, writes low 32 bits */
-    OP_PRINT,     /* pops val (int64_t), prints it */
+    OP_HALT = 0x00,
+    OP_NOP = 0x01,
+    OP_PUSH = 0x02,      /* 8-byte immediate: int64_t value */
+    OP_POP = 0x03,
+    OP_DUP = 0x04,
+    OP_ADD = 0x05,
+    OP_SUB = 0x06,
+    OP_MUL = 0x07,
+    OP_CMP_LT = 0x08,
+    OP_JMP = 0x09,       /* 2-byte immediate: absolute byte address */
+    OP_JMP_Z = 0x0A,     /* 2-byte immediate: absolute byte address */
+    OP_ALLOC = 0x0B,     /* pops size (int64_t), pushes heap address (uint16_t) */
+    OP_LOAD32 = 0x0C,    /* pops addr, pushes sign-extended int32 from RAM */
+    OP_STORE32 = 0x0D,   /* pops addr (top), pops val, writes low 32 bits */
 
-    /* Arithmetic extension. All binary ops pop b (top) then a. */
-    OP_DIV,       /* a / b, truncated toward zero; INT64_MIN / -1 wraps */
-    OP_MOD,       /* a % b, sign of a; INT64_MIN % -1 is 0 */
-    OP_CMP_EQ,    /* a == b */
-    OP_CMP_NE,    /* a != b */
-    OP_CMP_LE,    /* a <= b */
-    OP_CMP_GT,    /* a > b */
-    OP_CMP_GE,    /* a >= b */
-    OP_AND,       /* bitwise 64-bit AND */
-    OP_OR,        /* bitwise 64-bit OR */
-    OP_XOR,       /* bitwise 64-bit XOR */
-    OP_NOT,       /* bitwise 64-bit complement (unary) */
-    OP_SHL,       /* a << (b & 63), unsigned shift */
-    OP_SHR,       /* a >> (b & 63), logical unsigned shift */
-    OP_LNOT,      /* logical NOT: 0 -> 1, nonzero -> 0 (unary) */
-    OP_LAND,      /* logical AND: (a != 0) && (b != 0) */
-    OP_LOR,       /* logical OR: (a != 0) || (b != 0) */
+    OP_DIV = 0x0F,       /* a / b, truncated toward zero; INT64_MIN / -1 wraps */
+    OP_MOD = 0x10,       /* a % b, sign of a; INT64_MIN % -1 is 0 */
+    OP_CMP_EQ = 0x11,
+    OP_CMP_NE = 0x12,
+    OP_CMP_LE = 0x13,
+    OP_CMP_GT = 0x14,
+    OP_CMP_GE = 0x15,
+    OP_AND = 0x16,
+    OP_OR = 0x17,
+    OP_XOR = 0x18,
+    OP_NOT = 0x19,
+    OP_SHL = 0x1A,       /* a << (b & 63), unsigned shift */
+    OP_SHR = 0x1B,       /* a >> (b & 63), logical unsigned shift */
+    OP_LNOT = 0x1C,
+    OP_LAND = 0x1D,
+    OP_LOR = 0x1E,
 
-    /* Stack shuffling */
-    OP_SWAP,      /* [..., a, b] -> [..., b, a] */
-    OP_OVER,      /* [..., a, b] -> [..., a, b, a] */
-    OP_ROT,       /* [..., a, b, c] -> [..., b, c, a] */
-    OP_PICK,      /* pops n (top), pushes stack[sp-1-n]; n = 0 duplicates top */
+    OP_SWAP = 0x1F,
+    OP_OVER = 0x20,
+    OP_ROT = 0x21,
+    OP_PICK = 0x22,
 
-    /* RAM access. All accessors honor [0, 0x10000) for their width. */
-    OP_LOAD8,     /* pops addr, pushes unsigned byte */
-    OP_STORE8,    /* pops addr (top), pops val, writes low 8 bits */
-    OP_LOAD16,    /* pops addr, pushes unsigned 16-bit value */
-    OP_STORE16,   /* pops addr (top), pops val, writes low 16 bits */
-    OP_LOAD32U,   /* pops addr, pushes zero-extended uint32 */
-    OP_LOAD64,    /* pops addr, pushes int64_t (raw bits) */
-    OP_STORE64,   /* pops addr (top), pops val, writes all 64 bits */
+    OP_LOAD8 = 0x23,
+    OP_STORE8 = 0x24,
+    OP_LOAD16 = 0x25,
+    OP_STORE16 = 0x26,
+    OP_LOAD32U = 0x27,
+    OP_LOAD64 = 0x28,
+    OP_STORE64 = 0x29,
+    OP_FREE = 0x2A,
 
-    /* Heap reuse. Allocator metadata lives in VmState. */
-    OP_FREE,      /* pops addr; returns its block to the free list */
+    OP_CALL = 0x2B,      /* 2-byte immediate: absolute byte address */
+    OP_CALL_I = 0x2C,    /* pops target byte address from the stack */
+    OP_RET = 0x2D,
+    OP_ENTER = 0x2E,     /* 1-byte immediate: reserve n zeroed locals */
+    OP_LOCAL_GET = 0x2F, /* 1-byte immediate: push stack[fp + index] */
+    OP_LOCAL_SET = 0x30, /* 1-byte immediate: pop value into stack[fp + index] */
+    OP_JMP_I = 0x31,     /* pops target byte address and jumps */
 
-    /* Procedures. CALL pushes {return byte address, frame pointer}. */
-    OP_CALL,      /* 2-byte immediate: absolute byte address */
-    OP_CALL_I,    /* pops target byte address from the stack */
-    OP_RET,       /* pops result, unwinds frame, pushes result */
-    OP_ENTER,     /* 1-byte immediate: reserve n zeroed locals */
-    OP_LOCAL_GET, /* 1-byte immediate: push stack[fp + index] */
-    OP_LOCAL_SET, /* 1-byte immediate: pop value into stack[fp + index] */
+    OP_PUSHF = 0x32,     /* 8-byte immediate: raw 64-bit double pattern */
+    OP_FADD = 0x33,
+    OP_FSUB = 0x34,
+    OP_FMUL = 0x35,
+    OP_FDIV = 0x36,
+    OP_FNEG = 0x37,
+    OP_FABS = 0x38,
+    OP_FSQRT = 0x39,
+    OP_FCMP_LT = 0x3A,
+    OP_FCMP_EQ = 0x3B,
+    OP_FCMP_LE = 0x3C,
+    OP_FCMP_GT = 0x3D,
+    OP_FCMP_GE = 0x3E,
+    OP_FTOI = 0x3F,
+    OP_ITOF = 0x40,
 
-    OP_JMP_I,     /* pops target byte address and jumps */
-
-    /* IEEE-754 doubles: the stack stays int64_t, values are raw bit patterns. */
-    OP_PUSHF,     /* 8-byte immediate: raw 64-bit double pattern */
-    OP_FADD,
-    OP_FSUB,
-    OP_FMUL,
-    OP_FDIV,
-    OP_FNEG,
-    OP_FABS,
-    OP_FSQRT,
-    OP_FCMP_LT,
-    OP_FCMP_EQ,
-    OP_FCMP_LE,
-    OP_FCMP_GT,
-    OP_FCMP_GE,
-    OP_FTOI,      /* double -> int64_t (truncating; NaN/overflow saturates) */
-    OP_ITOF,      /* int64_t -> double */
-    OP_FPRINT,    /* pops raw bits, prints the double */
-
-    /* Host I/O. Transitional until the Console device layer lands. */
-    OP_PRINT_STR, /* pops len (top), pops addr; prints RAM bytes [addr, addr+len) */
-    OP_PRINT_CHAR,/* pops codepoint and prints one byte */
-    OP_READ_INT,  /* reads one integer from stdin and pushes it (0 on bad input) */
-    OP_READ_STR,  /* pops max (top), pops addr; reads a line into RAM, pushes len */
-
-    OP_COUNT      /* sentinel: number of opcodes; values 0x46..0x7F are reserved */
+    OP_DEI = 0x80,       /* 1-byte immediate: port; pushes a cell */
+    OP_DEO = 0x81        /* 1-byte immediate: port; pops a cell */
 } VmOpcode;
+
+#define VM_OPCODE_MAX 0x81u
 
 typedef enum {
     VM_OK = 0,
@@ -134,8 +148,24 @@ typedef struct {
     uint8_t  live;     /* 1 = in use, 0 = on the free list */
 } VmBlock;
 
-/* The whole machine lives in this struct. No field owns heap memory. */
+/*
+ * Device callbacks are host code, not VM code. Return VM_OK, VM_HALTED, or
+ * VM_ERR_IO. A callback must not touch VM state unless it can complete
+ * successfully; VM_ERR_IO leaves all VM state unchanged.
+ */
+typedef VmStatus (*VmDeviceRead)(void *ctx, struct VmState *vm,
+                                 uint8_t port, int64_t *out);
+typedef VmStatus (*VmDeviceWrite)(void *ctx, struct VmState *vm,
+                                  uint8_t port, int64_t value);
+
 typedef struct {
+    void *ctx;
+    VmDeviceRead read;
+    VmDeviceWrite write;
+} VmDevice;
+
+/* The whole machine lives in this struct. No field owns heap memory. */
+typedef struct VmState {
     uint16_t ip;       /* byte address of the next instruction */
     uint16_t sp;       /* live cells on the operand stack */
     uint16_t fp;       /* index of the current frame's first local */
@@ -148,11 +178,15 @@ typedef struct {
     VmFrame  frames[VM_FRAME_COUNT];
     VmBlock  blocks[VM_BLOCK_COUNT];
     uint16_t block_count;
+    VmDevice dev;      /* host device callbacks; preserved across resets */
 } VmState;
 
 void vm_init(VmState *vm);
-/* Reset to the post-init state. No owned buffers exist; kept for host symmetry. */
+/* Reset to the post-init state, preserving device callbacks. */
 void vm_free(VmState *vm);
+
+/* Install (or clear, with NULL) the host device callbacks. */
+void vm_set_device(VmState *vm, const VmDevice *dev);
 
 /* Load a raw payload at VM_IMAGE_START and jump to `entry` (usually VM_IMAGE_START).
  * `entry` must be inside the payload. Malformed images return VM_ERR_BAD_IP. */
@@ -171,10 +205,6 @@ unsigned vm_inst_size(uint8_t op);
 
 const char *vm_status_str(VmStatus status);
 const char *vm_opcode_name(uint8_t op);
-
-/* When enabled, PRINT/FPRINT/PRINT_STR prefix program output with the current
- * tick count. This is host output policy only. */
-void vm_set_debug_ticks(int enabled);
 
 /* IEEE-754 bit conversion helpers (memcpy-based, no strict-aliasing UB). */
 double  vm_bits_to_f64(int64_t bits);

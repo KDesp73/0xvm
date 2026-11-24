@@ -15,33 +15,40 @@ halt. The CLI can also load a previously built ROM directly.
 The layers are:
 
 1. **Core VM** (`include/vm.h`, `src/vm.c`) — fixed state, byte decoder,
-   interpreter, RAM allocator metadata.
+   interpreter, RAM allocator metadata, and two device-port instructions.
 2. **Assembler** (`include/asm.h`, `src/asm.c`) — source text to byte payload
    and ROM, with a per-byte source-line map.
-3. **CLI** (`apps/cli/main.c`) — local `run`/`build` commands, tracing, and tick
-   prefixes.
-4. **Tests** (`tests/test_vm.c`, `tests/test_asm.c`, `tests/test_rom.c`) — VM,
-   assembler, and ROM conformance checks.
+3. **CLI** (`apps/cli/main.c`) — local `run`/`build` commands, tracing, tick
+   prefixes, and host-backed System/Console devices.
+4. **Tests** (`tests/test_vm.c`, `tests/test_asm.c`, `tests/test_rom.c`,
+   `tests/test_device.c`) — VM, assembler, ROM, and device conformance checks.
 
 Cells and arithmetic are 64-bit; addresses and `ip` are 16-bit byte addresses.
-The VM has a fixed 64 KiB RAM and no buffer in the core grows at runtime.
+The VM has a fixed 64 KiB RAM, and no buffer in the core grows at runtime. The
+core contains no stdio calls: all I/O passes through host device callbacks.
 
 ## 2. Source layout
 
 | File | Role |
 | --- | --- |
-| `include/vm.h` | Public types, opcodes, statuses, constants, and API declarations |
-| `src/vm.c` | ROM/image loading, decoder, interpreter, heap allocator |
-| `include/asm.h`, `src/asm.c` | Two-pass assembler, byte encoding, ROM writer |
-| `apps/cli/main.c` | CLI: assemble, build ROMs, run sources/ROMs, trace |
+| `include/vm.h` | Public types, opcodes, statuses, constants, device API, and declarations |
+| `src/vm.c` | ROM/image loading, decoder, interpreter, device dispatch, heap allocator |
+| `include/asm.h`, `src/asm.c` | Two-pass assembler, byte encoding, pseudo-ops, ROM writer |
+| `apps/cli/main.c` | CLI: assemble, build ROMs, run sources/ROMs, trace, System/Console devices |
 | `apps/test/main.c` | Test executable entry point |
-| `tests/*.c`, `tests/tests.h` | VM, assembler, and ROM test suites |
+| `tests/*.c`, `tests/tests.h` | VM, assembler, ROM, and device test suites |
 | `examples/*.asm` | Example programs |
 | `Makefile` | Builds all apps and provides `make test` |
 
 ## 3. Machine state
 
 ```c
+typedef struct {
+    void *ctx;
+    VmDeviceRead read;   /* VmStatus(void *, VmState *, uint8_t, int64_t *) */
+    VmDeviceWrite write; /* VmStatus(void *, VmState *, uint8_t, int64_t) */
+} VmDevice;
+
 typedef struct {
     uint16_t ret_ip;   /* byte address to resume at after RET */
     uint16_t prev_fp;  /* caller's frame pointer */
@@ -66,18 +73,21 @@ typedef struct {
     VmFrame  frames[64];
     VmBlock  blocks[64];
     uint16_t block_count;
+    VmDevice dev;      /* host device callbacks; preserved across resets */
 } VmState;
 ```
 
 `ip` is a byte address into `mem`, not an instruction number. `sp` counts live
 stack cells; `fp` is the index of the current frame's first local; `fsp` counts
 live frames; `hp` is the allocator bump pointer. `ticks` counts successful
-steps, including `HALT`. All state is contained in the struct: no field owns
-heap memory.
+steps, including `HALT` and device-driven halts. All VM state is contained in
+the struct: no field owns heap memory. The device's opaque `ctx` belongs to the
+host and is not interpreted by the core.
 
-`vm_init()` zeroes the state, then sets `hp = VM_HEAP_START` (`0x4000`).
-`vm_free()` resets it to the same post-init state; it exists for host symmetry
-and is safe to call repeatedly.
+`vm_init()` zeroes the state, then sets `hp = VM_HEAP_START` (`0x4000`) and
+clears device callbacks. A host installs callbacks with `vm_set_device()` before
+running. `vm_free()` resets the machine to the same post-init state but keeps
+the installed callbacks; image loading preserves them as well.
 
 ### Memory map
 
@@ -87,34 +97,41 @@ and is safe to call repeatedly.
 0x3FFF ─────────────── end of image region
 0x4000 ─────────────── heap start (initial hp)
 0xFFFF ─────────────── end of 64 KiB RAM
+
+device page: 256 ports, outside RAM, addressed only by DEI/DEO
 ```
 
 The image payload is limited to `VM_IMAGE_MAX` (`0x3F00`) bytes. Loads and
 stores may access any byte of `mem`; the full access width must fit below
 `0x10000`. `ALLOC`/`FREE` are the only operations constrained to the heap
-region. Multi-byte RAM values use big-endian byte order.
+region. Multi-byte RAM values use big-endian byte order. Device ports are not
+RAM addresses and cannot be reached by load/store instructions.
 
 ## 4. Instruction encoding
 
-Every instruction starts with one opcode byte. Opcodes `0x00..0x45` are assigned
-in `VmOpcode` order; `0x46..0x7F` are reserved, and `0x80..0xFF` are reserved
-for a later device/vector layer.
+Every instruction starts with one opcode byte. Opcodes are assigned explicitly
+because retired I/O opcode values remain reserved:
+
+- `0x00..0x40` contains the current core opcodes, with `0x0E` unassigned.
+- `0x41..0x45` are unassigned (retired v1 I/O opcodes).
+- `0x46..0x7F` are reserved.
+- `0x80` is `DEI` (device input), `0x81` is `DEO` (device output).
+- `0x82..0xFF` are reserved.
 
 | Immediate | Opcodes | Total bytes | Encoding |
 | --- | --- | ---: | --- |
 | none | all others | 1 | — |
-| 1 byte | `ENTER` (0x2E), `LOCAL_GET` (0x2F), `LOCAL_SET` (0x30) | 2 | unsigned index |
+| 1 byte | `ENTER` (0x2E), `LOCAL_GET` (0x2F), `LOCAL_SET` (0x30), `DEI` (0x80), `DEO` (0x81) | 2 | unsigned index/port 0..255 |
 | 2 bytes | `JMP` (0x09), `JMP_Z` (0x0A), `CALL` (0x2B) | 3 | big-endian absolute byte address |
 | 8 bytes | `PUSH` (0x02), `PUSHF` (0x32) | 9 | big-endian `int64` / raw double bits |
 
-`vm_inst_size()` returns the encoded byte count for an opcode (1 for unknown
-values). `CALL_I` and `JMP_I` are single-byte opcodes that read their byte
-target from the stack.
+`vm_inst_size()` returns the encoded byte count for an opcode. `CALL_I` and
+`JMP_I` are single-byte opcodes that read their byte target from the stack.
 
 Fetching decodes `mem[ip]`, checks that the whole instruction fits in RAM,
 advances `ip` by `1 + immediate width`, and reads the immediate from `mem`.
 Direct jump/call targets are absolute RAM byte addresses, not instruction
-indices.
+indices. `vm_opcode_name()` returns `RESERVED` for unassigned values.
 
 ## 5. Instruction semantics
 
@@ -212,29 +229,65 @@ and `ip` from the top frame, and leaves the result at the caller's top.
 | `FCMP_LT`/`FCMP_EQ`/`FCMP_LE`/`FCMP_GT`/`FCMP_GE` | `[..., a, b] → [..., 0\|1]` | Double comparisons |
 | `FTOI` | `[..., bits] → [..., int]` | Truncating conversion; NaN/overflow saturate |
 | `ITOF` | `[..., int] → [..., bits]` | `int64_t` to double |
-| `FPRINT` | `[..., bits] → [...]` | Print the double |
 
 Floats are raw IEEE-754 bit patterns in ordinary `int64_t` cells; the VM does
 not track types. `vm_bits_to_f64()` and `vm_f64_to_bits()` use `memcpy` to avoid
-strict-aliasing undefined behavior.
+strict-aliasing undefined behavior. Printing a double is host policy, supplied
+by the Console device and the `FPRINT` pseudo-op.
 
-### Host I/O
+### Device layer
 
 | Opcode | Effect | Description |
 | --- | --- | --- |
-| `PRINT` | `[..., v] → [...]` | Print `v` as a signed integer |
-| `FPRINT` | `[..., bits] → [...]` | Print the double with `%.17g` |
-| `PRINT_STR` | `[..., addr, len] → [...]` | Print `len` RAM bytes (`len` on top) |
-| `PRINT_CHAR` | `[..., codepoint] → [...]` | Print the low byte |
-| `READ_INT` | `[...] → [..., value]` | Read an integer from stdin (`0` on bad input) |
-| `READ_STR` | `[..., addr, max] → [..., len]` | Read a line into RAM; replace `addr` with length |
+| `DEI port` | `[...] → [..., value]` | Check stack room, read a cell from the host, push it |
+| `DEO port` | `[..., value] → [...]` | Call the host with the top cell, then pop it |
 
-`PRINT`, `PRINT_STR`, and `FPRINT` add `[vm tick=N] ` when `-D` is enabled;
-that is host output policy, not machine state. `READ_INT` accepts up to 127
-input characters. `READ_STR` strips the trailing newline, requires `max > 0`
-and a valid RAM range, and pushes the resulting length. I/O failures return
-`VM_ERR_IO`. These opcodes are transitional; a later device layer will replace
-them with port reads/writes.
+The core has no I/O opcodes and no stdio calls. It only validates the operand
+stack, invokes `vm->dev.read` or `vm->dev.write`, and interprets the returned
+status. A callback returns `VM_OK`, `VM_HALTED`, or `VM_ERR_IO`; any other
+status is treated as `VM_ERR_IO`. A device halt keeps `ip` on the port
+instruction: `DEO` consumes its cell, while `DEI` does not push a result.
+`ticks` increments for a successful device halt.
+
+The CLI installs these ports:
+
+| Port | Name | Access | Meaning |
+| ---: | --- | --- | --- |
+| `0x00` | `VM_SYS_VERSION` | read | ROM format version (`2`) |
+| `0x01` | `VM_SYS_DEBUG` | read/write | tick-prefix flag |
+| `0x02` | `VM_SYS_HALT` | write | halt with `VM_HALTED` |
+| `0x10` | `VM_CONSOLE_PUTC` | write | low byte to stdout |
+| `0x11` | `VM_CONSOLE_GETC` | read | one byte from stdin (`0` on EOF) |
+| `0x12` | `VM_CONSOLE_PUTI` | write | signed decimal + newline |
+| `0x13` | `VM_CONSOLE_PUTF` | write | double bits + newline |
+| `0x14` | `VM_CONSOLE_PUTS_ADDR` | write | RAM address of the string to write |
+| `0x15` | `VM_CONSOLE_PUTS_LEN` | write | length of the string to write |
+| `0x16` | `VM_CONSOLE_PUTS` | write | string + newline (value ignored) |
+| `0x17` | `VM_CONSOLE_GETS_ADDR` | write | RAM address for input |
+| `0x18` | `VM_CONSOLE_GETS_MAX` | write | maximum input length |
+| `0x19` | `VM_CONSOLE_GETS` | write | read a line into RAM (value ignored) |
+| `0x1A` | `VM_CONSOLE_GETS_LEN` | read | length from the last `GETS` |
+| `0x1B` | `VM_CONSOLE_GETI` | read | one integer from stdin |
+
+`PUTS` and `GETS` validate the configured RAM range before touching `mem`.
+`GETS` strips a trailing newline and records its length for `GETS_LEN`.
+Read ports are synchronous and blocking; there is no ready/status port. `GETC`
+reports EOF as `0`, `GETI` maps EOF/bad input/overflow to `0`, and `GETS` maps
+EOF to an empty line; stream errors return `VM_ERR_IO`. `-D` sets
+`VM_SYS_DEBUG`; the Console callback then prefixes formatted output with
+`[vm tick=N]`. Another host can install different callbacks without changing
+the core or the ROM.
+
+The following source-level mnemonics are assembler pseudo-ops, not opcodes:
+
+| Pseudo-op | Expansion |
+| --- | --- |
+| `PRINT_CHAR` | `DEO 0x10` |
+| `PRINT` | `DEO 0x12` |
+| `FPRINT` | `DEO 0x13` |
+| `READ_INT` | `DEI 0x1B` |
+| `PRINT_STR` | `DEO 0x15`, `DEO 0x14`, `PUSH 0`, `DEO 0x16` |
+| `READ_STR` | `DEO 0x18`, `DEO 0x17`, `PUSH 0`, `DEO 0x19`, `DEI 0x1A` |
 
 ## 6. Execution model
 
@@ -244,7 +297,8 @@ them with port reads/writes.
   `VM_ERR_BAD_IP`, and an unassigned opcode is `VM_ERR_BAD_OP`.
 - Normally `ip` becomes the address after the instruction.
 - `JMP`/`JMP_Z`, `JMP_I`, `CALL`/`CALL_I`, and `RET` assign a new `ip`.
-- `HALT` leaves `ip` on the halt opcode and returns `VM_HALTED`.
+- `HALT` or a callback returning `VM_HALTED` stops execution and leaves `ip` on
+  the current instruction.
 
 `ticks` increments only after a successful step. `vm_run(vm, max_steps)` repeats
 `vm_step` until a non-`VM_OK` status or the step budget is exhausted;
@@ -260,9 +314,15 @@ condition or target; `ALLOC` checks size, rounding, stack room, heap room, and
 metadata room before changing `hp`, `sp`, or the block list; loads/stores
 validate stack depth and address range before touching RAM; `LOCAL_SET` checks
 the slot before writing; and `RET` checks the frame and result before
-unwinding. A failed step leaves `ip`, `sp`, `fp`, `fsp`, `hp`, `ticks`, RAM,
-stack, frames, and block metadata exactly as they were. Tests assert this for
-each error class.
+unwinding. `DEI` checks stack room and a callback exists before invoking the
+host; `DEO` checks stack depth before reading the value. A failed step leaves
+`ip`, `sp`, `fp`, `fsp`, `hp`, `ticks`, RAM, stack, frames, and block metadata
+exactly as they were.
+
+A device callback is host code. If it returns `VM_ERR_IO`, the core has made no
+state change; callbacks must avoid mutating VM state unless they can complete
+successfully. Side effects outside `VmState` (stdout, stdin, files, host
+buffers) belong to the host and are not rolled back.
 
 Status codes: `VM_OK`, `VM_HALTED`, `VM_ERR_BAD_IP`, `VM_ERR_BAD_OP`,
 `VM_ERR_STACK_OVERFLOW`, `VM_ERR_STACK_UNDERFLOW`, `VM_ERR_HEAP_OVERFLOW`,
@@ -279,15 +339,16 @@ names.
 - Labels are `name:` (letters/digits/underscore, starting with a letter or `_`)
   and may share a line with an instruction or data directive.
 - `JMP`, `JMP_Z`, and `CALL` accept a label or an integer expression.
-- Operand kinds are none, integer expression, float literal, jump target, and
-  local index; missing/illegal operands are reported with line numbers.
+- Operand kinds are none, integer expression, float literal, jump target,
+  local index, and device port; missing/illegal operands are reported with line
+  numbers. `DEI`/`DEO` ports must be expressions in `0..255`.
 
 ### Expressions and constants
 
-`PUSH`, `ENTER`, `LOCAL_GET`/`SET`, `CALL`, jump targets, and numeric data
-values accept integer expressions: decimal or `0x` hex literals, `+ - ~`,
-`+ - * / %`, parentheses, and previously defined constants. `EQU name expr`
-defines a constant. Arithmetic wraps in `uint64_t`; division by zero is an
+`PUSH`, `ENTER`, `LOCAL_GET`/`SET`, `CALL`, jump targets, `DEI`/`DEO` ports, and
+numeric data values accept integer expressions: decimal or `0x` hex literals,
+`+ - ~`, `+ - * / %`, parentheses, and previously defined constants. `EQU name
+expr` defines a constant. Arithmetic wraps in `uint64_t`; division by zero is an
 error; and `-9223372036854775808` is accepted as `INT64_MIN`.
 
 ### Image layout and data directives
@@ -309,21 +370,24 @@ to the data area's own offset. Labels on data directives resolve to their
 absolute RAM addresses, so programs use `LOAD*`/`STORE*` to access them; the
 image is not copied into the heap. The total payload must fit in `VM_IMAGE_MAX`.
 
-### Pseudo-ops, macros, and line map
+### Pseudo-ops, aliases, and line map
 
 `INC`, `DEC`, and `NEG` expand to several real instructions. `GET` and `SET`
-are aliases for `LOCAL_GET` and `LOCAL_SET`. `AsmProgram.lines` maps every
-payload byte to its source line (0 for generated bytes);
-`asm_line_of(prog, addr)` takes an absolute RAM byte address, which is what the
-CLI's `-t` trace prints.
+are aliases for `LOCAL_GET` and `LOCAL_SET`. `PRINT`, `FPRINT`, `PRINT_CHAR`,
+`PRINT_STR`, `READ_INT`, and `READ_STR` expand to the device-port sequences in
+section 5; source code keeps the readable names while ROMs contain only
+`DEI`/`DEO`. `AsmProgram.lines` maps every payload byte to its source line (0
+for generated bytes); `asm_line_of(prog, addr)` takes an absolute RAM byte
+address, which is what the CLI's `-t` trace prints.
 
 `asm_parse_string()` and `asm_parse_file()` return 0 on success or -1 on
 failure with a line-numbered message in `prog.error` and `prog.error_line`
-(unknown mnemonics, invalid operands, duplicate/undefined labels, duplicate
-constants, bad escapes, out-of-range jumps/targets, oversized images, and file
-I/O errors). `asm_program_free()` releases the emitted payload buffers while
-preserving the diagnostic fields. The assembler may grow its source-side
-scratch buffers, but the emitted payload and the VM itself are fixed.
+(unknown mnemonics, invalid operands or ports, duplicate/undefined labels,
+duplicate constants, bad escapes, out-of-range jumps/targets, oversized
+images, and file I/O errors). `asm_program_free()` releases the emitted payload
+buffers while preserving the diagnostic fields. The assembler may grow its
+source-side scratch buffers, but the emitted payload and the VM itself are
+fixed.
 
 ## 8. ROM format and loading
 
@@ -333,7 +397,7 @@ writes those bytes to a file. The header is:
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 4 | Magic `56 4D 49 4D` (`"VMIM"`) |
-| 4 | 1 | Format version, currently `1` |
+| 4 | 1 | Format version, currently `2` |
 | 5 | 1 | Flags, must be `0` |
 | 6 | 2 | Reserved, must be `0` |
 | 8 | 2 | Payload length, big-endian, `0..0x3F00` |
@@ -369,13 +433,16 @@ AddressSanitizer and UndefinedBehaviorSanitizer.
 - The **VM suite** covers stack ops and shuffling, arithmetic/wraparound,
   division edges, comparisons/bitwise/logical ops, both jump paths and indirect
   jumps, all RAM widths and bounds, allocation/free-list reuse, calls/locals,
-  floats, I/O, and error atomicity.
+  floats, and error atomicity.
+- The **device suite** covers fake host reads and writes, argument passing,
+  device errors and atomicity, device halts, retired opcode values, and opcode
+  names.
 - The **assembler suite** covers parsing, comments, labels, expressions and
-  constants, every mnemonic, pseudo-ops, data directives and image layout,
-  byte-address line mapping, file loading, running parsed programs, and parse
-  errors.
-- The **ROM suite** checks header encoding, load validation, and writing a ROM
-  that can be reloaded and run.
+  constants, every mnemonic, arithmetic and Console pseudo-ops, data directives
+  and image layout, byte-address line mapping, file loading, running parsed
+  programs, and parse errors.
+- The **ROM suite** checks header encoding, load validation, and writing a v2
+  ROM that can be reloaded and run.
 
 For example:
 
@@ -385,18 +452,17 @@ For example:
 
 prints the loop's `0..5` and the final `60` before halting. `gcd.asm` prints
 `21`; `features.asm` demonstrates data labels, constants, locals, floats, and
-I/O together; `statistics.asm` reads a count and values from stdin and prints
-descriptive statistics.
+Console I/O together; `statistics.asm` reads a count and values from stdin and
+prints descriptive statistics.
 
 ## 10. Current limitations
 
 - Floats use raw bit patterns with no runtime type tag: mixing integer and float
   ops on the same value is the program's responsibility.
-- `PRINT`/`READ_*` remain core opcodes; a later device layer will move them out
-  of the core.
+- Only System and Console ports are defined by the supplied CLI host; other
+  hosts may assign other ports.
+- There is no interrupt or event-vector mechanism; those ports remain reserved.
 - The image region has no relocation or protection model beyond the loader's
   payload-length check.
 - The assembler has no conditional assembly, include files, or true macro
   definition facility; its "macros" are fixed pseudo-op expansions.
-- The device page and event vectors described in the roadmap are not implemented
-  yet.

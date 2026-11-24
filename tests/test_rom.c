@@ -24,6 +24,7 @@ static void test_header_and_load(void)
     CHECK(asm_make_rom(&prog, rom, sizeof rom, &rom_len) == 0);
     CHECK(rom_len == VM_ROM_HEADER_SIZE + prog.len);
     CHECK(rom[0] == 0x56 && rom[1] == 0x4D && rom[2] == 0x49 && rom[3] == 0x4D);
+    CHECK(VM_ROM_VERSION == 2u);
     CHECK(rom[4] == VM_ROM_VERSION && rom[5] == 0u);
     CHECK(rom[8] == (uint8_t)(prog.len >> 8) && rom[9] == (uint8_t)prog.len);
     CHECK(rom[10] == 0x01 && rom[11] == 0x00);

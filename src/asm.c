@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +15,8 @@ typedef enum {
     OPR_INT,     /* integer expression */
     OPR_TARGET,  /* label or integer expression */
     OPR_FLOAT,   /* floating-point literal (raw bits are emitted) */
-    OPR_LOCAL    /* local variable index (encoded in one byte) */
+    OPR_LOCAL,   /* local variable index (encoded in one byte) */
+    OPR_PORT     /* device port number (encoded in one byte) */
 } OperandKind;
 
 typedef enum { REF_NONE = 0, REF_TARGET, REF_VALUE } RefKind;
@@ -78,7 +80,6 @@ static const OpDef OPS[] = {
     {"ALLOC",   OP_ALLOC,    OPR_NONE},
     {"LOAD32",  OP_LOAD32,   OPR_NONE},
     {"STORE32", OP_STORE32,  OPR_NONE},
-    {"PRINT",   OP_PRINT,    OPR_NONE},
     {"DIV",     OP_DIV,      OPR_NONE},
     {"MOD",     OP_MOD,      OPR_NONE},
     {"CMP_EQ",  OP_CMP_EQ,   OPR_NONE},
@@ -139,13 +140,10 @@ static const OpDef OPS[] = {
     {"FCMP_GE", OP_FCMP_GE,  OPR_NONE},
     {"FTOI",    OP_FTOI,     OPR_NONE},
     {"ITOF",    OP_ITOF,     OPR_NONE},
-    {"FPRINT",  OP_FPRINT,   OPR_NONE},
 
-    /* Host I/O */
-    {"PRINT_STR",  OP_PRINT_STR,  OPR_NONE},
-    {"PRINT_CHAR", OP_PRINT_CHAR, OPR_NONE},
-    {"READ_INT",   OP_READ_INT,   OPR_NONE},
-    {"READ_STR",   OP_READ_STR,   OPR_NONE}
+    /* Device layer */
+    {"DEI",     OP_DEI,      OPR_PORT},
+    {"DEO",     OP_DEO,      OPR_PORT}
 };
 
 /* ------------------------------------------------------------------ basics */
@@ -465,6 +463,15 @@ static Item *add_item(Parser *p, size_t line)
     return item;
 }
 
+static int add_inst(Parser *p, size_t line, VmOpcode op, int64_t arg)
+{
+    Item *item = add_item(p, line);
+    if (!item) return -1;
+    item->op = op;
+    item->arg = arg;
+    return 0;
+}
+
 /* ---------------------------------------------------------- data emission */
 
 typedef struct {
@@ -693,33 +700,53 @@ int asm_parse_string(AsmProgram *prog, const char *source)
             } else {
                 const OpDef *def = find_op(s, mn_len);
                 if (!def) {
-                    /* Pseudo-ops expand into several real instructions. */
-                    if (token_eq_ci(s, mn_len, "INC") ||
-                        token_eq_ci(s, mn_len, "DEC") ||
-                        token_eq_ci(s, mn_len, "NEG")) {
-                        if (rest_len != 0u) {
-                            fail(&p, line_no, "%.*s takes no operand", (int)mn_len, s);
-                            goto error;
-                        }
-                        Item *it;
-                        if (token_eq_ci(s, mn_len, "INC")) {
-                            it = add_item(&p, line_no); if (!it) goto oom;
-                            it->op = OP_PUSH; it->arg = 1;
-                            it = add_item(&p, line_no); if (!it) goto oom;
-                            it->op = OP_ADD;
-                        } else if (token_eq_ci(s, mn_len, "DEC")) {
-                            it = add_item(&p, line_no); if (!it) goto oom;
-                            it->op = OP_PUSH; it->arg = 1;
-                            it = add_item(&p, line_no); if (!it) goto oom;
-                            it->op = OP_SUB;
-                        } else {
-                            it = add_item(&p, line_no); if (!it) goto oom;
-                            it->op = OP_PUSH; it->arg = 0;
-                            it = add_item(&p, line_no); if (!it) goto oom;
-                            it->op = OP_SWAP;
-                            it = add_item(&p, line_no); if (!it) goto oom;
-                            it->op = OP_SUB;
-                        }
+                    /* Pseudo-ops expand into real instructions and device ports. */
+                    bool pseudo = token_eq_ci(s, mn_len, "INC") ||
+                                  token_eq_ci(s, mn_len, "DEC") ||
+                                  token_eq_ci(s, mn_len, "NEG") ||
+                                  token_eq_ci(s, mn_len, "PRINT_CHAR") ||
+                                  token_eq_ci(s, mn_len, "PRINT") ||
+                                  token_eq_ci(s, mn_len, "FPRINT") ||
+                                  token_eq_ci(s, mn_len, "READ_INT") ||
+                                  token_eq_ci(s, mn_len, "PRINT_STR") ||
+                                  token_eq_ci(s, mn_len, "READ_STR");
+                    if (!pseudo) {
+                        fail(&p, line_no, "unknown instruction '%.*s'", (int)mn_len, s);
+                        goto error;
+                    }
+                    if (rest_len != 0u) {
+                        fail(&p, line_no, "%.*s takes no operand", (int)mn_len, s);
+                        goto error;
+                    }
+                    if (token_eq_ci(s, mn_len, "INC")) {
+                        if (add_inst(&p, line_no, OP_PUSH, 1) != 0 ||
+                            add_inst(&p, line_no, OP_ADD, 0) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "DEC")) {
+                        if (add_inst(&p, line_no, OP_PUSH, 1) != 0 ||
+                            add_inst(&p, line_no, OP_SUB, 0) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "NEG")) {
+                        if (add_inst(&p, line_no, OP_PUSH, 0) != 0 ||
+                            add_inst(&p, line_no, OP_SWAP, 0) != 0 ||
+                            add_inst(&p, line_no, OP_SUB, 0) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "PRINT_CHAR")) {
+                        if (add_inst(&p, line_no, OP_DEO, VM_CONSOLE_PUTC) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "PRINT")) {
+                        if (add_inst(&p, line_no, OP_DEO, VM_CONSOLE_PUTI) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "FPRINT")) {
+                        if (add_inst(&p, line_no, OP_DEO, VM_CONSOLE_PUTF) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "READ_INT")) {
+                        if (add_inst(&p, line_no, OP_DEI, VM_CONSOLE_GETI) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "PRINT_STR")) {
+                        if (add_inst(&p, line_no, OP_DEO, VM_CONSOLE_PUTS_LEN) != 0 ||
+                            add_inst(&p, line_no, OP_DEO, VM_CONSOLE_PUTS_ADDR) != 0 ||
+                            add_inst(&p, line_no, OP_PUSH, 0) != 0 ||
+                            add_inst(&p, line_no, OP_DEO, VM_CONSOLE_PUTS) != 0) goto oom;
+                    } else if (token_eq_ci(s, mn_len, "READ_STR")) {
+                        if (add_inst(&p, line_no, OP_DEO, VM_CONSOLE_GETS_MAX) != 0 ||
+                            add_inst(&p, line_no, OP_DEO, VM_CONSOLE_GETS_ADDR) != 0 ||
+                            add_inst(&p, line_no, OP_PUSH, 0) != 0 ||
+                            add_inst(&p, line_no, OP_DEO, VM_CONSOLE_GETS) != 0 ||
+                            add_inst(&p, line_no, OP_DEI, VM_CONSOLE_GETS_LEN) != 0) goto oom;
                     } else {
                         fail(&p, line_no, "unknown instruction '%.*s'", (int)mn_len, s);
                         goto error;
@@ -774,6 +801,10 @@ int asm_parse_string(AsmProgram *prog, const char *source)
                     if ((def->operand == OPR_LOCAL || def->op == OP_ENTER) &&
                         (value < 0 || value > 255)) {
                         fail(&p, line_no, "invalid local index");
+                        goto error;
+                    }
+                    if (def->operand == OPR_PORT && (value < 0 || value > 255)) {
+                        fail(&p, line_no, "invalid port index");
                         goto error;
                     }
                     Item *item = add_item(&p, line_no);

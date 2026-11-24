@@ -1,9 +1,9 @@
-# Machine Contract (v1)
+# Machine Contract (v2)
 
 > Status: **implemented and frozen**. This document defines the observable
-> machine that the assembler, emulator, and ROMs agree on. It is the first step
-> toward an Uxn-shaped platform: a frozen core, a binary image format, and a thin
-> host layer.
+> machine that the assembler, emulator, ROMs, and hosts agree on. ABI v2 replaces
+> the transitional core I/O opcodes of v1 with a device page and two port
+> opcodes. ROMs from v1 that contain `PRINT*`/`READ*` opcodes are not compatible.
 
 ## 0. Decisions
 
@@ -12,21 +12,22 @@
 | Base architecture | Keep the 64-bit core: 64-bit cells, 64-bit arithmetic, floats, `CALL`/`ENTER`/`LOCAL_*` |
 | Address space | 64 KiB, byte-addressed, 16-bit addresses |
 | Instruction encoding | 8-bit opcode with fixed, per-opcode immediate widths |
+| I/O | Host device callbacks through `DEI`/`DEO`; no I/O opcodes in the core |
 
 Non-goals for this contract: moving a running machine between hosts, dynamic
-memory growth, and host-specific I/O policy. The machine is local; ROMs are its
-distribution unit.
+memory growth, and host-specific I/O policy in the core. The machine is local;
+ROMs are its distribution unit.
 
 ## 1. Design principles
 
 1. **Implementation-first.** A feature is only added if the cost of implementing
    it in a second emulator remains small.
-2. **Frozen ABI.** Opcode numbers, memory map, and image format do not change
-   casually. This is what lets ROMs outlive their assembler.
+2. **Frozen ABI.** Opcode numbers, memory map, image format, and device ports do
+   not change casually. This is what lets ROMs outlive their assembler.
 3. **ROM is the distribution unit.** Programs are shipped as byte images, not as
    text that must be re-parsed by every host.
-4. **Thin host boundary.** The core knows only bytes, stacks, and RAM. Screens,
-   keyboards, and files belong to a device layer added in a later step.
+4. **Thin host boundary.** The core knows only bytes, stacks, RAM, and two port
+   opcodes. Screens, keyboards, and files belong to host devices.
 
 ## 2. Numbers and representation
 
@@ -34,14 +35,16 @@ distribution unit.
   used for `ADD`, `SUB`, `MUL`, shifts, and bitwise ops.
 - Floats are **raw IEEE-754 bit patterns** in cells; the VM has no type tags.
 - Addresses and instruction pointers are **16-bit unsigned** (`uint16_t`).
-- All multi-byte values — immediates and heap values — are **big-endian**.
-- `ticks` is a 64-bit count of successfully executed instructions.
+- All multi-byte values — immediates and RAM values — are **big-endian**.
+- `ticks` is a 64-bit count of successfully executed instructions, including
+  `HALT` and device-driven halts.
 
 ## 3. Machine state
 
 The state consists of registers, one operand stack, call-frame metadata,
-allocator metadata, and addressable RAM. Stacks and metadata live **outside**
-addressable RAM, as in Uxn; only `mem` is reachable by load/store instructions.
+allocator metadata, addressable RAM, and host device callbacks. Stacks and
+metadata live **outside** addressable RAM, as in Uxn; only `mem` is reachable by
+load/store instructions.
 
 | Field | Width | Meaning |
 | --- | --- | --- |
@@ -51,6 +54,11 @@ addressable RAM, as in Uxn; only `mem` is reachable by load/store instructions.
 | `fsp` | 16-bit | Number of live call frames (0..64) |
 | `hp` | 16-bit | Allocator bump pointer into the heap region; initial value `0x4000` |
 | `ticks` | 64-bit | Successfully executed instructions |
+| `dev` | pointers | Host read/write callbacks plus an opaque context |
+
+Device callbacks are host wiring, not machine state: `vm_free()` and image
+loading preserve callbacks installed after `vm_init()`. A fresh `vm_init()`
+starts with no device callbacks, so a host installs them before running a ROM.
 
 Fixed capacities:
 
@@ -58,6 +66,7 @@ Fixed capacities:
 - call frames: **64** entries (`ret_ip`, `prev_fp`)
 - allocator blocks: **64** entries (`addr`, `size`, `live`)
 - addressable RAM: **65536 bytes** (`mem[0x0000..0xFFFF]`)
+- device ports: **256** entries outside RAM
 
 No buffer grows at runtime. Overflow, underflow, and exhausted metadata are
 errors, not wrap-around behaviour.
@@ -70,6 +79,8 @@ errors, not wrap-around behaviour.
 0x3FFF ─────────────── end of image region
 0x4000 ─────────────── heap start (hp initial value)
 0xFFFF ─────────────── end of RAM
+
+device page: 256 ports, outside RAM, addressed only by DEI/DEO
 ```
 
 - The image loader writes the ROM payload at `0x0100`. Maximum payload size is
@@ -78,22 +89,26 @@ errors, not wrap-around behaviour.
   variables. It is not pre-filled by the ROM.
 - `ALLOC` returns addresses in `0x4000..0xFFFF`; the heap grows upward from
   `0x4000`. Allocation sizes are rounded up to a multiple of 8.
-- The **device page** (256 ports, 16 devices × 16 ports) is reserved outside
-  addressable RAM for the later device step. It is not part of this contract's
-  implementation yet.
+- Ports are **not** RAM addresses: `DEI`/`DEO` immediates select host devices,
+  and no load/store instruction can reach them.
 
 ## 5. Instruction encoding
 
-Every instruction starts with one opcode byte. Opcodes `0x00..0x45` are assigned
-to the current instruction set in `VmOpcode` order; `0x46..0x7F` are reserved;
-`0x80..0xFF` are reserved for device/vector operations to be defined later.
+Every instruction starts with one opcode byte. Assigned opcodes are explicit
+because retired I/O opcodes remain reserved:
+
+- `0x00..0x40`, `0x46..0x7F`: current core opcodes and reserved slots.
+- `0x0E` and `0x41..0x45`: permanently unassigned (retired v1 I/O opcodes).
+- `0x80`: `DEI` (device input).
+- `0x81`: `DEO` (device output).
+- `0x82..0xFF`: reserved for future devices/vectors.
 
 Immediate widths are fixed per opcode:
 
 | Immediate | Opcodes | Total bytes | Encoding |
 | --- | --- | ---: | --- |
 | none | all others | 1 | — |
-| 1 byte | `ENTER` (0x2E), `LOCAL_GET` (0x2F), `LOCAL_SET` (0x30) | 2 | unsigned index 0..255 |
+| 1 byte | `ENTER` (0x2E), `LOCAL_GET` (0x2F), `LOCAL_SET` (0x30), `DEI` (0x80), `DEO` (0x81) | 2 | unsigned index/port 0..255 |
 | 2 bytes | `JMP` (0x09), `JMP_Z` (0x0A), `CALL` (0x2B) | 3 | big-endian absolute byte address |
 | 8 bytes | `PUSH` (0x02), `PUSHF` (0x32) | 9 | big-endian `int64` / raw 64-bit double |
 
@@ -118,9 +133,13 @@ from the stack.
   fit in `0x0000..0xFFFF`. This lets programs read static data directly from the
   image region. `hp` constrains only `ALLOC`/`FREE`, not ordinary loads/stores.
   Multi-byte values use big-endian byte order.
-- `PRINT`, `PRINT_STR`, `PRINT_CHAR`, `READ_INT`, and `READ_STR` remain core
-  opcodes **temporarily**. They are transitional: step 3 of the roadmap moves
-  them onto the Console device as port reads/writes.
+- `DEI port` checks stack room, reads one cell from the host, then pushes it.
+- `DEO port` requires a cell, writes it to the host, then pops it. A callback may
+  return `VM_OK`, `VM_HALTED`, or `VM_ERR_IO`.
+
+`PRINT`, `FPRINT`, `PRINT_STR`, `PRINT_CHAR`, `READ_INT`, and `READ_STR` are
+**assembler pseudo-ops**, not opcodes. They expand to device port accesses in
+the payload.
 
 ## 7. Reset and halt
 
@@ -130,10 +149,12 @@ On load:
 2. stacks, frames, and block metadata are zeroed; `sp = fp = fsp = 0`;
 3. `hp = 0x4000`;
 4. `ip` is set to the image entry point (normally `0x0100`);
-5. `ticks = 0`.
+5. `ticks = 0`;
+6. installed device callbacks are preserved.
 
-Execution proceeds until `HALT` or an error. There is no interrupt mechanism in
-this contract; event vectors are introduced with the device layer.
+Execution proceeds until `HALT`, a device halt, or an error. There is no
+interrupt mechanism in this contract; event vectors are reserved for a future
+device extension.
 
 ## 8. Image format
 
@@ -142,7 +163,7 @@ ROM files use a 16-byte header followed by the payload:
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 4 | Magic `56 4D 49 4D` (`"VMIM"`) |
-| 4 | 1 | Format version, currently `1` |
+| 4 | 1 | Format version, currently `2` |
 | 5 | 1 | Flags, must be `0` |
 | 6 | 2 | Reserved, must be `0` |
 | 8 | 2 | Payload length, big-endian, `0..0x3F00` |
@@ -156,23 +177,63 @@ inside the loaded payload; otherwise loading fails.
 ## 9. Errors
 
 The machine is **not** total: invalid opcodes, bad jump targets, stack
-overflow/underflow, bad addresses, and allocation failures return the existing
-`VM_ERR_*` statuses. A failed instruction leaves all state unchanged (atomic
-error handling), which is required by the current test suite and is valuable for
-debuggers. Uxn's "any byte sequence is a valid program" property is deliberately
-not adopted.
+overflow/underflow, bad addresses, allocation failures, and device failures
+return the existing `VM_ERR_*` statuses. A failed instruction leaves all VM
+state unchanged (atomic error handling), which is required by the test suite and
+is valuable for debuggers. Uxn's "any byte sequence is a valid program" property
+is deliberately not adopted.
+
+A device callback that changes host state is a side effect outside `VmState`;
+callbacks must not mutate VM state unless they can complete successfully. On a
+device halt, `ip` stays on the `DEI`/`DEO` instruction and `ticks` increments;
+`DEO` consumes its cell, while `DEI` does not push a result.
 
 ## 10. Host boundary
 
-The core depends on no platform headers and performs no direct I/O except the
-transitional opcodes listed in §6. A host provides:
+The core depends on no platform headers and performs no I/O itself. A host
+provides:
 
 - a ROM image to load;
 - a step/run loop;
-- (later) device callbacks for console, screen, controller, and files.
+- device callbacks with this shape:
 
-Printing with tick prefixes (`-D`) and instruction tracing (`-t`) are host
-policies, not machine state.
+```c
+VmStatus read(void *ctx, VmState *vm, uint8_t port, int64_t *out);
+VmStatus write(void *ctx, VmState *vm, uint8_t port, int64_t value);
+```
+
+Callbacks return `VM_OK`, `VM_HALTED`, or `VM_ERR_IO`. The callback context and
+all formatting/input policy belong to the host. The CLI supplies these ports:
+
+| Port | Name | Access | Meaning |
+| ---: | --- | --- | --- |
+| `0x00` | `VM_SYS_VERSION` | read | ROM format version |
+| `0x01` | `VM_SYS_DEBUG` | read/write | tick-prefix flag |
+| `0x02` | `VM_SYS_HALT` | write | halt with `VM_HALTED` |
+| `0x10` | `VM_CONSOLE_PUTC` | write | low byte to stdout |
+| `0x11` | `VM_CONSOLE_GETC` | read | one byte from stdin (`0` on EOF) |
+| `0x12` | `VM_CONSOLE_PUTI` | write | signed decimal + newline |
+| `0x13` | `VM_CONSOLE_PUTF` | write | double bits + newline |
+| `0x14` | `VM_CONSOLE_PUTS_ADDR` | write | RAM address of the string to write |
+| `0x15` | `VM_CONSOLE_PUTS_LEN` | write | length of the string to write |
+| `0x16` | `VM_CONSOLE_PUTS` | write | string + newline (value ignored) |
+| `0x17` | `VM_CONSOLE_GETS_ADDR` | write | RAM address for input |
+| `0x18` | `VM_CONSOLE_GETS_MAX` | write | maximum input length |
+| `0x19` | `VM_CONSOLE_GETS` | write | read a line into RAM (value ignored) |
+| `0x1A` | `VM_CONSOLE_GETS_LEN` | read | length from the last `GETS` |
+| `0x1B` | `VM_CONSOLE_GETI` | read | one integer from stdin |
+
+Other hosts may assign different meanings to other ports; a ROM that depends on
+a port must also depend on the host providing it.
+
+Read ports are synchronous and blocking: `GETC`, `GETI`, and `GETS` wait for host
+input and have no ready/status port. `GETC` reports EOF as `0`; `GETI` reports
+EOF, unparseable input, and overflow as `0`; `GETS` reports EOF as an empty
+line. Stream errors return `VM_ERR_IO`.
+
+Instruction tracing (`-t`) and the `-D` tick prefix are host policies, not
+machine state. `-D` enables `VM_SYS_DEBUG`, which the Console device reads when
+formatting output.
 
 ## 11. Implementation status
 
@@ -180,16 +241,16 @@ The current codebase conforms to this contract:
 
 1. Programs are bytes in `mem`; `vm_step` fetches and decodes from `ip`.
 2. `VmState` contains fixed arrays for RAM, stack, frames, and block metadata;
-   the core never calls `realloc`.
+   the core never calls `realloc` and contains no stdio calls.
 3. `ip`, jump/call targets, `CALL` return addresses, and assembler labels are
    absolute 16-bit byte addresses.
-4. The assembler emits a `VMIM` ROM with the header above and maps source lines
-   by absolute byte address. Static data stays in the image region and is
-   addressed directly; the image is not copied into the heap.
-5. `vm-cli run` accepts assembly source or a ROM, and `vm-cli build` writes a
-   ROM. The examples run unchanged from source and can be rebuilt as ROMs.
-6. Tests use byte-encoded programs and include ROM header/loader checks. A
-   standalone conformance image for third-party emulators remains a future
-   toolchain item.
-
-Until the device layer lands, `PRINT`/`READ_*` stay as core opcodes.
+4. The assembler emits a v2 `VMIM` ROM and maps source lines by absolute byte
+   address. Static data stays in the image region; the image is not copied into
+   the heap.
+5. Core I/O opcodes are gone. `DEI`/`DEO` are the only I/O instructions, and
+   `PRINT*`/`READ*` are assembler pseudo-ops that expand to Console ports.
+6. `vm-cli run` accepts assembly source or a ROM, `vm-cli build` writes a ROM,
+   and the CLI installs System/Console device callbacks.
+7. Tests cover byte-encoded programs, ROM loading, device calls, device errors,
+   device halts, and retired opcode behavior. A standalone conformance image for
+   third-party emulators remains a future toolchain item.
