@@ -1,7 +1,20 @@
-# vm
+# 0xvm
 
 > A small, standalone C stack VM.
 > Originally used by a process migration experiment for my PhD research.
+
+```text
+ ▄▄▄                      
+██▀██                     
+▓▓ ▓▓                     
+▓▓ ▓▓                     
+▒▒ ▒▒ ▄▄ ▄▄ ▄▄ ▄▄ ▄▄▄▄▄▄  
+▒▒ ▒▒ ▒▒ ▒▒ ▒▒ ▒▒ ▒▒ ▒ ▒▒ 
+░░ ░░ ░░ ░░ ░░ ░░ ░░ ░ ░░ 
+░░ ░░  ░▀░  ░░ ░░ ░░ ░ ░░ 
+██▄██ ██ ██ ▀█ █▀ ██   ██ 
+ ▀▀▀  ▀▀ ▀▀   ▀   ▀▀   ▀▀ 
+```
 
 The machine is frozen at ABI v2: 64-bit cells, 64 KiB byte-addressed RAM,
 16-bit addresses, byte-encoded instructions, `VMIM` v2 ROMs, and a device page
