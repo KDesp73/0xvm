@@ -18,10 +18,11 @@ The layers are:
    interpreter, RAM allocator metadata, and two device-port instructions.
 2. **Assembler** (`include/asm.h`, `src/asm.c`) — source text to byte payload
    and ROM, with a per-byte source-line map.
-3. **CLI** (`apps/cli/main.c`) — local `run`/`build`/`dis` commands, tracing,
-   tick prefixes, and host-backed System/Console devices.
-4. **Toolchain helper** (`include/dis.h`, `src/dis.c`) — one-instruction decoder
-   used by `vm-cli dis`.
+3. **Libraries** (`build/lib0xvm.a`, `build/lib0xvm.so`) — the VM, assembler,
+   and decoder built as one static and one shared library.
+4. **Tools** (`apps/vm`, `apps/asm`, `apps/dis`, `apps/rom`) — `0xvm`, `0xasm`,
+   `0xdis`, and `0xrom`, with tracing, tick prefixes, and host-backed
+   System/Console devices in `0xvm`.
 5. **Tests** — VM, assembler, ROM, device, conformance ROM, and disassembler
    checks under `tests/`.
 
@@ -445,13 +446,14 @@ metadata, copies the payload to `0x0100`, sets `hp = 0x4000` and `ip` to the
 entry point, and leaves `ticks = 0`. The entry must lie inside the loaded
 payload. Malformed images return `VM_ERR_BAD_IP` without changing the state.
 
-The CLI supports both paths:
+The tools support both paths:
 
 ```sh
-./build/vm-cli run -f examples/counter.asm     # assemble, wrap, load, run
-./build/vm-cli build -f examples/counter.asm   # write counter.rom
-./build/vm-cli run -f counter.rom              # load and run the ROM
-./build/vm-cli dis -f counter.rom              # decode the ROM payload
+./build/0xvm -f examples/counter.asm     # assemble, wrap, load, run
+./build/0xasm -f examples/counter.asm    # write counter.rom
+./build/0xvm -f counter.rom              # load and run the ROM
+./build/0xdis -f counter.rom             # decode the ROM payload
+./build/0xrom -f counter.rom             # inspect and validate the header
 ```
 
 `dis` starts at the entry point, follows the entry `JMP` past static data, and
@@ -462,13 +464,14 @@ payload end are reported as decode errors.
 ## 9. Building and testing
 
 ```sh
-make all                 # build vm-cli and vm-test
-make test                # build and run build/vm-test
+make all                 # build lib0xvm, the 0x* tools, and 0xtest
+make test                # build and run build/0xtest
+make shared              # build only the shared library
 make type=RELEASE test   # release build (no sanitizers)
 ```
 
 The Makefile discovers every `tests/*.c`, compiles it, and links the objects
-into `build/vm-test` with the core VM sources. DEBUG builds enable
+into `build/0xtest` with `build/lib0xvm.a`. DEBUG builds enable
 AddressSanitizer and UndefinedBehaviorSanitizer.
 
 - The **VM suite** covers stack ops and shuffling, arithmetic/wraparound,
@@ -492,7 +495,7 @@ AddressSanitizer and UndefinedBehaviorSanitizer.
 For example:
 
 ```sh
-./build/vm-cli run -f examples/counter.asm
+./build/0xvm -f examples/counter.asm
 ```
 
 prints the loop's `0..5` and the final `60` before halting. `gcd.asm` prints
@@ -504,10 +507,10 @@ prints descriptive statistics.
 
 - Floats use raw bit patterns with no runtime type tag: mixing integer and float
   ops on the same value is the program's responsibility.
-- Only System and Console ports are defined by the supplied CLI host; other
+- Only System and Console ports are defined by the supplied `0xvm` host; other
   hosts may assign other ports.
 - There is no interrupt or event-vector mechanism; those ports remain reserved.
 - The image region has no relocation or protection model beyond the loader's
   payload-length check.
-- The assembler has no conditional assembly, include files, or true macro
-  definition facility; its "macros" are fixed pseudo-op expansions.
+- `INCLUDE` resolves through the local filesystem; ROMs are self-contained and
+  do not carry included source.
