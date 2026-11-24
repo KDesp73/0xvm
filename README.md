@@ -88,4 +88,6 @@ printf '5\n10\n20\n30\n40\n50\n1\n' | ./build/vm-cli run -f examples/statistics.
 ```
 
 See [VM Implementation](docs/VM-Implementation.md) for the instruction
-semantics, execution rules, and error-atomicity guarantees.
+semantics, execution rules, and error-atomicity guarantees. The proposed fixed
+machine ABI — memory map, instruction encoding, and ROM format — is in
+[Machine Contract](docs/Machine-Contract.md).
