@@ -27,7 +27,7 @@ TEST_DEP = $(TEST_OBJ:.o=.d)
 TEST_MAIN = $(BUILD_DIR)/app_0xtest.o
 TEST_BIN  = $(BUILD_DIR)/0xtest
 
-TOOL_NAMES = vm asm dis rom
+TOOL_NAMES = vm asm dis rom db
 TOOLS      = $(foreach tool,$(TOOL_NAMES),$(BUILD_DIR)/0x$(tool))
 COMMON_OBJ = $(BUILD_DIR)/tools_common.o $(BUILD_DIR)/host.o
 
@@ -42,6 +42,8 @@ LIB_STATIC = $(BUILD_DIR)/lib0xvm.a
 LIB_SHARED = $(BUILD_DIR)/lib0xvm.so
 CONFORMANCE_ROM = $(BUILD_DIR)/conformance-v2.rom
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
+DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
+DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
 UNAME_S   := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     SHARED_FLAG = -dynamiclib
@@ -147,11 +149,19 @@ conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM thro
 		| sed '/^\[INFO\] /d' > $(BUILD_DIR)/conformance-actual.txt
 	@diff -u $(CONFORMANCE_EXPECTED) $(BUILD_DIR)/conformance-actual.txt
 
+.PHONY: debugger-check
+debugger-check: $(BUILD_DIR)/0xdb examples/gcd.asm $(DEBUGGER_SCRIPT) $(DEBUGGER_EXPECTED) ## Run a scripted 0xdb session
+	@echo "[RUN] 0xdb command check"
+	@./$(BUILD_DIR)/0xdb -f examples/gcd.asm -x $(DEBUGGER_SCRIPT) \
+		> $(BUILD_DIR)/debugger-actual.txt
+	@diff -u $(DEBUGGER_EXPECTED) $(BUILD_DIR)/debugger-actual.txt
+
 .PHONY: test
 test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformance checks
 	@echo "[RUN] 0xtest"
 	@$(TEST_BIN)
 	@$(MAKE) --no-print-directory conformance-check
+	@$(MAKE) --no-print-directory debugger-check
 	@$(MAKE) --no-print-directory sdl-check
 
 .PHONY: sdl

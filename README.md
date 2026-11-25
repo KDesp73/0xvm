@@ -20,10 +20,10 @@ make sdl              # build 0xvm-sdl (skipped when SDL3 is unavailable)
 make sdl-check        # run the conformance ROM through 0xvm-sdl with dummy video
 ```
 
-`make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, five tools
-(`0xvm`, `0xasm`, `0xdis`, `0xrom`, `0xtest`), and — when `pkg-config sdl3`
-succeeds — `build/0xvm-sdl`. The CLI tools accept `-f/--file`, `-v/--version`,
-and `-h/--help`; `0xtest` accepts `-v` and `-h`.
+`make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, six tools
+(`0xvm`, `0xasm`, `0xdis`, `0xrom`, `0xdb`, `0xtest`), and — when
+`pkg-config sdl3` succeeds — `build/0xvm-sdl`. The CLI tools accept `-f/--file`,
+`-v/--version`, and `-h/--help`; `0xtest` accepts `-v` and `-h`.
 
 | Tool | Purpose |
 | --- | --- |
@@ -32,6 +32,7 @@ and `-h/--help`; `0xtest` accepts `-v` and `-h`.
 | `0xasm` | assemble source into a VMIM ROM; `-o` sets the output path, `-I` adds include paths |
 | `0xdis` | disassemble a source file or ROM |
 | `0xrom` | inspect and validate a ROM header |
+| `0xdb` | interactive debugger: breakpoints, stepping, stack/RAM/frame dumps |
 
 ```sh
 ./build/0xvm -f examples/counter.asm
@@ -40,7 +41,37 @@ and `-h/--help`; `0xtest` accepts `-v` and `-h`.
 ./build/0xrom -f counter.rom
 ./build/0xdis -f counter.rom
 ./build/0xvm-sdl -f paint.asm -W 640 -H 480   # needs SDL3
+./build/0xdb -f examples/gcd.asm              # interactive debugger
 ```
+
+## Debugging
+
+`0xdb` runs the same VM core with a terminal command loop. Source files provide
+labels, constants, and source-line mapping; ROMs work too, with `-s SOURCE` to
+attach labels and line numbers from the matching assembly file.
+
+```sh
+./build/0xdb -f examples/gcd.asm
+./build/0xdb -f build/gcd.rom -s examples/gcd.asm
+printf '5\n10\n20\n30\n40\n50\n1\n' > stats.in
+./build/0xdb -f examples/statistics.asm -i stats.in
+./build/0xdb -f examples/gcd.asm -x tests/debugger.in   # scripted session
+```
+
+Common commands:
+
+| Command | Meaning |
+| --- | --- |
+| `c`, `s [N]`, `n`, `finish`, `until ADDR` | continue, step, step over `CALL`, return, run to address |
+| `b ADDR\|LABEL\|LINE`, `d N\|all`, `enable`/`disable` | breakpoints (`*ADDR` forces an address) |
+| `info`, `stack [N]`, `locals [N]`, `frames`, `heap` | machine state and call frames |
+| `x[/8\|/16\|/32\|/64] ADDR [N]`, `dis [ADDR] [N]`, `list [LINE]` | RAM, disassembly, source |
+| `symbols [FILTER]`, `reset`, `q` | symbols, reload image, exit |
+
+Addresses may be `0x...`, a label, `$` (current `ip`), or `label+offset`. Console
+input is read from `-i FILE` (or `/dev/null`) so it never competes with debugger
+commands. `make debugger-check` runs the scripted golden session in
+`tests/debugger.in`.
 
 The conformance image is a real ROM, not just a C test. It exercises every
 opcode and the full System/Console device set, then halts through `VM_SYS_HALT`.

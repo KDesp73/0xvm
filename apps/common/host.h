@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "vm.h"
 
@@ -37,6 +38,8 @@ VmDevice host_device(VmHost *host);
 typedef struct {
     uint16_t puts_addr, puts_len;
     uint16_t gets_addr, gets_max, gets_len;
+    FILE *input;       /* Console input; defaults to stdin */
+    FILE *output;      /* Console output; defaults to stdout */
     bool debug;
 } HostStdio;
 

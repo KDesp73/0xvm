@@ -27,12 +27,16 @@ typedef struct {
     const char *name;
     size_t len;
     size_t item_index;  /* label points here; item_count means "end" */
+    size_t line;
+    const char *path;
 } Label;
 
 typedef struct {
     const char *name;
     size_t len;
     int64_t value;
+    size_t line;
+    const char *path;
 } Constant;
 
 typedef struct {
@@ -200,6 +204,26 @@ void asm_program_init(AsmProgram *prog)
     memset(prog, 0, sizeof(*prog));
 }
 
+static void free_debug_info(AsmProgram *prog)
+{
+    for (size_t i = 0u; i < prog->symbol_count; i++) {
+        free(prog->symbols[i].name);
+        free(prog->symbols[i].path);
+    }
+    free(prog->symbols);
+    prog->symbols = NULL;
+    prog->symbol_count = 0u;
+    prog->symbol_cap = 0u;
+
+    for (size_t i = 0u; i < prog->source_count; i++) free(prog->sources[i]);
+    free(prog->sources);
+    free(prog->files);
+    prog->sources = NULL;
+    prog->files = NULL;
+    prog->source_count = 0u;
+    prog->source_cap = 0u;
+}
+
 void asm_program_free(AsmProgram *prog)
 {
     if (!prog) return;
@@ -208,6 +232,7 @@ void asm_program_free(AsmProgram *prog)
     memcpy(error, prog->error, sizeof error);
     free(prog->bytes);
     free(prog->lines);
+    free_debug_info(prog);
     memset(prog, 0, sizeof(*prog));
     memcpy(prog->error, error, sizeof error);
     prog->error_line = error_line;
@@ -218,6 +243,7 @@ static void clear_payload(AsmProgram *prog)
 {
     free(prog->bytes);
     free(prog->lines);
+    free_debug_info(prog);
     prog->bytes = NULL;
     prog->lines = NULL;
     prog->len = 0u;
@@ -230,6 +256,33 @@ size_t asm_line_of(const AsmProgram *prog, uint16_t addr)
     size_t offset = (size_t)addr - VM_IMAGE_START;
     if (offset >= prog->len) return 0u;
     return prog->lines[offset];
+}
+
+const char *asm_file_of(const AsmProgram *prog, uint16_t addr)
+{
+    if (!prog || !prog->files || addr < VM_IMAGE_START) return NULL;
+    size_t offset = (size_t)addr - VM_IMAGE_START;
+    if (offset >= prog->len) return NULL;
+    return prog->files[offset];
+}
+
+const AsmSymbol *asm_symbol_by_name(const AsmProgram *prog, const char *name)
+{
+    if (!prog || !name) return NULL;
+    for (size_t i = 0u; i < prog->symbol_count; i++) {
+        if (strcmp(prog->symbols[i].name, name) == 0) return &prog->symbols[i];
+    }
+    return NULL;
+}
+
+const AsmSymbol *asm_symbol_at(const AsmProgram *prog, uint16_t addr)
+{
+    if (!prog) return NULL;
+    for (size_t i = 0u; i < prog->symbol_count; i++) {
+        const AsmSymbol *sym = &prog->symbols[i];
+        if (sym->kind == ASM_SYM_LABEL && sym->value == (int64_t)addr) return sym;
+    }
+    return NULL;
 }
 
 static int fail(Parser *p, size_t line, const char *fmt, ...)
@@ -262,6 +315,62 @@ static int grow(void **array, size_t *cap, size_t need, size_t elem_size)
     if (!tmp) return -1;
     *array = tmp;
     *cap = next;
+    return 0;
+}
+
+/* ---------------------------------------------------------- debug metadata */
+
+static char *copy_text(const char *text, size_t len)
+{
+    char *copy = malloc(len + 1u);
+    if (!copy) return NULL;
+    memcpy(copy, text, len);
+    copy[len] = '\0';
+    return copy;
+}
+
+/* Source paths are few and repeated for every byte, so store each once and
+ * point `prog->files` at the interned copy. */
+static char *intern_source(AsmProgram *prog, const char *path)
+{
+    if (!prog || !path || !*path) return NULL;
+    for (size_t i = 0u; i < prog->source_count; i++) {
+        if (strcmp(prog->sources[i], path) == 0) return prog->sources[i];
+    }
+    char *copy = copy_text(path, strlen(path));
+    if (!copy) return NULL;
+    if (grow((void **)&prog->sources, &prog->source_cap,
+             prog->source_count + 1u, sizeof *prog->sources) != 0) {
+        free(copy);
+        return NULL;
+    }
+    prog->sources[prog->source_count++] = copy;
+    return copy;
+}
+
+static int add_program_symbol(AsmProgram *prog, AsmSymbolKind kind,
+                              const char *name, size_t name_len, int64_t value,
+                              size_t line, const char *path)
+{
+    char *name_copy = copy_text(name, name_len);
+    char *path_copy = path ? copy_text(path, strlen(path)) : NULL;
+    if (!name_copy || (path && !path_copy)) {
+        free(name_copy);
+        free(path_copy);
+        return -1;
+    }
+    if (grow((void **)&prog->symbols, &prog->symbol_cap,
+             prog->symbol_count + 1u, sizeof *prog->symbols) != 0) {
+        free(name_copy);
+        free(path_copy);
+        return -1;
+    }
+    AsmSymbol *sym = &prog->symbols[prog->symbol_count++];
+    sym->name = name_copy;
+    sym->value = value;
+    sym->line = line;
+    sym->path = path_copy;
+    sym->kind = kind;
     return 0;
 }
 
@@ -669,6 +778,8 @@ static int add_label(Parser *p, const char *name, size_t len, size_t item_index)
     label->name = name;
     label->len = len;
     label->item_index = item_index;
+    label->line = p->err_line;
+    label->path = p->err_path;
     return 0;
 }
 
@@ -683,6 +794,8 @@ static int add_const(Parser *p, const char *name, size_t len, int64_t value)
     c->name = name;
     c->len = len;
     c->value = value;
+    c->line = p->err_line;
+    c->path = p->err_path;
     return 0;
 }
 
@@ -1111,32 +1224,50 @@ static int expand_macro(Parser *p, const Macro *m, char **args, size_t argc,
 typedef struct {
     uint8_t *bytes;
     size_t *lines;
+    const char **paths;
     size_t len, cap;
 } DataBuf;
 
-static int db_append(DataBuf *db, const uint8_t *src, size_t n, size_t line)
+static int db_append(DataBuf *db, const uint8_t *src, size_t n, size_t line,
+                     const char *path)
 {
     if (grow((void **)&db->bytes, &db->cap, db->len + n, 1u) != 0) return -1;
     size_t *new_lines = realloc(db->lines, db->cap * sizeof *db->lines);
     if (!new_lines) return -1;
     db->lines = new_lines;
+    const char **new_paths = realloc(db->paths, db->cap * sizeof *db->paths);
+    if (!new_paths) return -1;
+    db->paths = new_paths;
     memcpy(db->bytes + db->len, src, n);
-    for (size_t i = 0; i < n; i++) db->lines[db->len + i] = line;
+    for (size_t i = 0; i < n; i++) {
+        db->lines[db->len + i] = line;
+        db->paths[db->len + i] = path;
+    }
     db->len += n;
     return 0;
 }
 
-static int db_byte(DataBuf *db, uint8_t b, size_t line)
+static int db_byte(DataBuf *db, uint8_t b, size_t line, const char *path)
 {
-    return db_append(db, &b, 1u, line);
+    return db_append(db, &b, 1u, line, path);
 }
 
-static int db_number(DataBuf *db, uint64_t v, unsigned width, size_t line)
+static int db_number(DataBuf *db, uint64_t v, unsigned width, size_t line,
+                     const char *path)
 {
-    for (unsigned i = 0; i < width; i++) {
-        if (db_byte(db, (uint8_t)(v >> (8u * (width - 1u - i))), line) != 0) return -1;
+    for (unsigned i = 0u; i < width; i++) {
+        if (db_byte(db, (uint8_t)(v >> (8u * (width - 1u - i))), line,
+                    path) != 0) return -1;
     }
     return 0;
+}
+
+static void free_data_buf(DataBuf *db)
+{
+    free(db->bytes);
+    free(db->lines);
+    free(db->paths);
+    memset(db, 0, sizeof *db);
 }
 
 static int hex_digit(char c)
@@ -1147,7 +1278,8 @@ static int hex_digit(char c)
     return -1;
 }
 
-static int emit_string(Parser *p, DataBuf *db, const char *text, size_t len, size_t line)
+static int emit_string(Parser *p, DataBuf *db, const char *text, size_t len,
+                       size_t line, const char *path)
 {
     if (len < 2u || text[0] != '"' || text[len - 1u] != '"') {
         return fail(p, line, "STR requires a quoted string");
@@ -1174,7 +1306,7 @@ static int emit_string(Parser *p, DataBuf *db, const char *text, size_t len, siz
                 default: return fail(p, line, "unknown escape sequence");
             }
         }
-        if (db_byte(db, c, line) != 0) return fail(p, line, "out of memory");
+        if (db_byte(db, c, line, path) != 0) return fail(p, line, "out of memory");
     }
     return 0;
 }
@@ -1191,7 +1323,8 @@ static int emit_data(Parser *p, DataBuf *db, size_t *item_addr)
         item_addr[i] = VM_IMAGE_START + 3u + db->len;
 
         if (item->data_kind == D_STR) {
-            if (emit_string(p, db, item->text, item->text_len, item->line) != 0)
+            if (emit_string(p, db, item->text, item->text_len, item->line,
+                            item->path) != 0)
                 return -1;
             continue;
         }
@@ -1202,7 +1335,7 @@ static int emit_data(Parser *p, DataBuf *db, size_t *item_addr)
                 return fail(p, item->line, "invalid ALIGN value");
             }
             while (db->len % (size_t)n != 0u) {
-                if (db_byte(db, 0u, item->line) != 0)
+                if (db_byte(db, 0u, item->line, item->path) != 0)
                     return fail(p, item->line, "out of memory");
             }
             continue;
@@ -1221,7 +1354,8 @@ static int emit_data(Parser *p, DataBuf *db, size_t *item_addr)
                 return fail(p, item->line, "invalid integer '%.*s'",
                             (int)(cur - start), start);
             }
-            if (db_number(db, (uint64_t)value, width, item->line) != 0)
+            if (db_number(db, (uint64_t)value, width, item->line,
+                          item->path) != 0)
                 return fail(p, item->line, "out of memory");
             while (cur < end && (isspace((unsigned char)*cur) || *cur == ',')) cur++;
             if (cur >= end) break;
@@ -1590,8 +1724,7 @@ static int parse_text(AsmProgram *prog, const char *source, const char *path,
     if (!item_addr) goto oom;
     if (emit_data(&p, &data, item_addr) != 0) {
         free(item_addr);
-        free(data.bytes);
-        free(data.lines);
+        free_data_buf(&data);
         goto error;
     }
 
@@ -1608,30 +1741,35 @@ static int parse_text(AsmProgram *prog, const char *source, const char *path,
     if (total > VM_IMAGE_MAX) {
         fail(&p, p.err_line, "image too large (%zu bytes)", total);
         free(item_addr);
-        free(data.bytes);
-        free(data.lines);
+        free_data_buf(&data);
         goto error;
     }
 
     prog->bytes = calloc(total, 1u);
     prog->lines = calloc(total, sizeof *prog->lines);
-    if (!prog->bytes || !prog->lines) {
-        free(item_addr);
-        free(data.bytes);
-        free(data.lines);
-        goto oom;
-    }
+    prog->files = calloc(total, sizeof *prog->files);
+    if (!prog->bytes || !prog->lines || !prog->files) goto oom;
     prog->len = total;
     prog->entry = 0u;
 
     size_t first_line = p.items[0].line;
+    const char *first_path = p.items[0].path;
+    char *entry_path = intern_source(prog, first_path);
+    if (first_path && !entry_path) goto oom;
     prog->bytes[0] = (uint8_t)OP_JMP;
     put_be(prog->bytes + 1u, (uint64_t)(VM_IMAGE_START + code_off), 2u);
-    for (size_t i = 0u; i < 3u; i++) prog->lines[i] = first_line;
+    for (size_t i = 0u; i < 3u; i++) {
+        prog->lines[i] = first_line;
+        prog->files[i] = entry_path;
+    }
 
     if (data.len > 0u) {
         memcpy(prog->bytes + 3u, data.bytes, data.len);
         memcpy(prog->lines + 3u, data.lines, data.len * sizeof *prog->lines);
+        for (size_t i = 0u; i < data.len; i++) {
+            prog->files[3u + i] = intern_source(prog, data.paths[i]);
+            if (data.paths[i] && !prog->files[3u + i]) goto oom;
+        }
     }
 
     size_t pos = code_off;
@@ -1663,28 +1801,46 @@ static int parse_text(AsmProgram *prog, const char *source, const char *path,
             }
         }
 
+        char *item_path = intern_source(prog, item->path);
+        if (item->path && !item_path) goto oom;
         unsigned width = (unsigned)vm_inst_size(op) - 1u;
         prog->bytes[pos] = op;
-        for (size_t k = 0u; k <= width; k++) prog->lines[pos + k] = item->line;
+        for (size_t k = 0u; k <= width; k++) {
+            prog->lines[pos + k] = item->line;
+            prog->files[pos + k] = item_path;
+        }
         pos++;
         if (width == 1u) prog->bytes[pos] = (uint8_t)arg;
         else if (width == 2u || width == 8u) put_be(prog->bytes + pos, (uint64_t)arg, width);
         pos += width;
     }
 
+    for (size_t i = 0u; i < p.label_count; i++) {
+        const Label *label = &p.labels[i];
+        if (label->item_index > p.item_count ||
+            add_program_symbol(prog, ASM_SYM_LABEL, label->name, label->len,
+                               (int64_t)item_addr[label->item_index],
+                               label->line, label->path) != 0) goto oom;
+    }
+    for (size_t i = 0u; i < p.const_count; i++) {
+        const Constant *c = &p.consts[i];
+        if (add_program_symbol(prog, ASM_SYM_CONST, c->name, c->len, c->value,
+                               c->line, c->path) != 0) goto oom;
+    }
+
     free(item_addr);
-    free(data.bytes);
-    free(data.lines);
+    free_data_buf(&data);
     free_parser(&p);
     return 0;
 
 emit_error:
     free(item_addr);
-    free(data.bytes);
-    free(data.lines);
+    free_data_buf(&data);
     goto error;
 oom:
     fail(&p, p.err_line, "out of memory");
+    free(item_addr);
+    free_data_buf(&data);
 error:
     free_parser(&p);
     clear_payload(prog);

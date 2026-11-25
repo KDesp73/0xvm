@@ -1,0 +1,11 @@
+b gcd_loop
+c
+info
+stack
+x/32 0 2
+dis $ 3
+delete all
+until done
+info
+c
+q

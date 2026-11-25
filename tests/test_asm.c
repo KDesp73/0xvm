@@ -645,6 +645,56 @@ static void test_includes(void)
     remove(missing);
 }
 
+static void test_debug_metadata(void)
+{
+    const char *lib = "build/asm_dbg_lib.asm";
+    const char *main_path = "build/asm_dbg_main.asm";
+    write_temp(lib, "included: PUSH 7\n");
+    write_temp(main_path,
+        "EQU ANSWER 42\n"
+        "INCLUDE \"asm_dbg_lib.asm\"\n"
+        "entry: PUSH ANSWER\n"
+        "ADD\n"
+        "HALT\n"
+        "after_end:\n");
+
+    AsmProgram prog;
+    CHECK(asm_parse_file(&prog, main_path) == 0);
+
+    const AsmSymbol *constant = asm_symbol_by_name(&prog, "ANSWER");
+    CHECK(constant != NULL);
+    if (constant) {
+        CHECK(constant->kind == ASM_SYM_CONST);
+        CHECK(constant->value == 42);
+        CHECK(strcmp(constant->path, main_path) == 0);
+    }
+
+    const AsmSymbol *included = asm_symbol_by_name(&prog, "included");
+    CHECK(included != NULL);
+    if (included) {
+        CHECK(included->kind == ASM_SYM_LABEL);
+        CHECK(asm_line_of(&prog, (uint16_t)included->value) == 1u);
+        CHECK(strcmp(asm_file_of(&prog, (uint16_t)included->value), lib) == 0);
+    }
+
+    const AsmSymbol *entry = asm_symbol_by_name(&prog, "entry");
+    CHECK(entry != NULL);
+    if (entry) {
+        CHECK(entry->kind == ASM_SYM_LABEL);
+        CHECK(asm_symbol_at(&prog, (uint16_t)entry->value) == entry);
+        CHECK(asm_line_of(&prog, (uint16_t)entry->value) == 3u);
+        CHECK(strcmp(asm_file_of(&prog, (uint16_t)entry->value), main_path) == 0);
+    }
+
+    const AsmSymbol *end = asm_symbol_by_name(&prog, "after_end");
+    CHECK(end != NULL);
+    if (end) CHECK(end->value == (int64_t)(VM_IMAGE_START + prog.len));
+
+    asm_program_free(&prog);
+    remove(lib);
+    remove(main_path);
+}
+
 static void test_errors(void)
 {
     expect_error("FOO 1\n", 1, "unknown instruction");
@@ -682,6 +732,7 @@ int test_asm(void)
     test_conditionals();
     test_macros();
     test_includes();
+    test_debug_metadata();
     test_pseudo_ops();
     test_console_pseudo_ops();
     test_pseudo_opt_in();
