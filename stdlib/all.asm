@@ -2,6 +2,8 @@
 ; Include this once near the top of a program, or pick individual files.
 
 INCLUDE "arith.asm"
+INCLUDE "mem.asm"
+INCLUDE "strings.asm"
 INCLUDE "locals.asm"
 INCLUDE "console.asm"
 INCLUDE "screen.asm"

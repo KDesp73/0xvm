@@ -301,6 +301,75 @@ static void test_console_pseudo_ops(void)
     asm_program_free(&prog);
 }
 
+static void test_stdlib_strings(void)
+{
+    const char *src =
+        "INCLUDE \"strings.asm\"\n"
+        "a:   STR \"abc\"\n"
+        "b:   STR \"abd\"\n"
+        "bc:  STR \"bc\"\n"
+        "buf: DB 0, 0, 0, 0, 0, 0\n"
+        "nul: STR \"hello\\0\"\n"
+        "    PUSH a\n"
+        "    PUSH 3\n"
+        "    PUSH b\n"
+        "    PUSH 3\n"
+        "    STRCMP\n"
+        "    PUSH a\n"
+        "    PUSH 3\n"
+        "    PUSH a\n"
+        "    PUSH 3\n"
+        "    STREQUAL\n"
+        "    PUSH buf\n"
+        "    PUSH 0\n"
+        "    PUSH a\n"
+        "    PUSH 3\n"
+        "    STRCAT\n"
+        "    PUSH buf\n"
+        "    LOAD16\n"
+        "    PUSH buf\n"
+        "    PUSH a\n"
+        "    PUSH 1\n"
+        "    PUSH 2\n"
+        "    STRSLICE\n"
+        "    PUSH buf\n"
+        "    LOAD16\n"
+        "    PUSH a\n"
+        "    PUSH 3\n"
+        "    PUSH 98\n"
+        "    STRCHR\n"
+        "    PUSH a\n"
+        "    PUSH 3\n"
+        "    PUSH bc\n"
+        "    PUSH 2\n"
+        "    STRFIND\n"
+        "    PUSH a\n"
+        "    PUSH 3\n"
+        "    PUSH b\n"
+        "    PUSH 1\n"
+        "    STRFIND\n"
+        "    PUSH nul\n"
+        "    STRLENZ\n"
+        "    HALT\n";
+
+    static const int64_t expected[] = {
+        -1, 1, 3, 0x6162, 2, 0x6263, 1, 1, 0, 5
+    };
+
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == sizeof expected / sizeof expected[0]);
+        for (size_t i = 0u; i < sizeof expected / sizeof expected[0]; i++) {
+            CHECK(vm.stack[i] == expected[i]);
+        }
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+}
+
 static void test_stdlib_ports(void)
 {
     static const char *const names[] = {
@@ -339,6 +408,56 @@ static void test_stdlib_ports(void)
             CHECK(op_at(&prog, i) == OP_DEO);
             CHECK(arg_at(&prog, i) == expected[i]);
         }
+    }
+    asm_program_free(&prog);
+}
+
+static void test_stdlib_mem(void)
+{
+    const char *src =
+        "INCLUDE \"mem.asm\"\n"
+        "src:  STR \"abc\"\n"
+        "other: STR \"abd\"\n"
+        "dst:  DB 0, 0, 0, 0, 0, 0\n"
+        "    PUSH dst\n"
+        "    PUSH src\n"
+        "    PUSH 3\n"
+        "    MEMCPY\n"
+        "    PUSH dst\n"
+        "    PUSH src\n"
+        "    PUSH 3\n"
+        "    MEMCMP\n"
+        "    PUSH dst\n"
+        "    PUSH other\n"
+        "    PUSH 3\n"
+        "    MEMCMP\n"
+        "    PUSH dst\n"
+        "    PUSH 65\n"
+        "    PUSH 2\n"
+        "    MEMSET\n"
+        "    PUSH dst\n"
+        "    LOAD16\n"
+        "    PUSH dst\n"
+        "    PUSH 3\n"
+        "    MEMZERO\n"
+        "    PUSH dst\n"
+        "    LOAD16\n"
+        "    HALT\n";
+
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 4u);
+        CHECK(vm.stack[0] == 0);                 /* copied bytes match src */
+        CHECK(vm.stack[1] == -1);                /* 'c' - 'd' */
+        CHECK(vm.stack[2] == 0x4141);            /* MEMSET wrote two 'A's */
+        CHECK(vm.stack[3] == 0);                 /* MEMZERO cleared them */
+        CHECK(vm.mem[VM_IMAGE_START + 9u] == 0); /* dst stays zeroed */
+        CHECK(vm.mem[VM_IMAGE_START + 10u] == 0);
+        CHECK(vm.mem[VM_IMAGE_START + 11u] == 0);
+        vm_free(&vm);
     }
     asm_program_free(&prog);
 }
@@ -736,6 +855,8 @@ int test_asm(void)
     test_pseudo_ops();
     test_console_pseudo_ops();
     test_pseudo_opt_in();
+    test_stdlib_mem();
+    test_stdlib_strings();
     test_stdlib_ports();
     test_data_directives();
     test_line_mapping();
