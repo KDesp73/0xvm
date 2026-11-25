@@ -38,10 +38,14 @@ core contains no stdio calls: all I/O passes through host device callbacks.
 | `src/vm.c` | ROM/image loading, decoder, interpreter, device dispatch, heap allocator |
 | `include/asm.h`, `src/asm.c` | Two-pass assembler, byte encoding, macros, ROM writer |
 | `include/dis.h`, `src/dis.c` | Instruction decoder for disassembly output |
-| `apps/cli/main.c` | CLI: assemble, build/disassemble ROMs, run sources/ROMs, trace, host devices |
+| `apps/vm/main.c` | CLI host: assemble/run sources and ROMs, trace, tick debug prefix |
+| `apps/vm-sdl/main.c` | SDL3 host: window, framebuffer, keyboard, quit flag, timer |
+| `apps/common/tools.c` | File/ROM helpers shared by tools and hosts |
+| `apps/common/host.c` | Shared System/Console devices and port-range dispatcher |
 | `apps/test/main.c` | Test executable entry point |
-| `tests/*.c`, `tests/tests.h` | VM, assembler, ROM, device, conformance, and disassembler suites |
+| `tests/*.c`, `tests/tests.h` | VM, assembler, ROM, device, host, conformance, and disassembler suites |
 | `tests/conformance.asm` | Executable v2 conformance ROM source |
+| `stdlib/*.asm` | Opt-in macro library (ports, arithmetic, locals, Console, Screen, Controller, timer) |
 | `examples/*.asm` | Example programs |
 | `Makefile` | Builds all apps and provides `make test` |
 
@@ -527,8 +531,8 @@ prints descriptive statistics.
 
 - Floats use raw bit patterns with no runtime type tag: mixing integer and float
   ops on the same value is the program's responsibility.
-- Only System and Console ports are defined by the supplied `0xvm` host; other
-  hosts may assign other ports.
+- `0xvm` supplies System and Console; `0xvm-sdl` additionally supplies Screen,
+  Controller, and timer. Other hosts may assign other ports.
 - There is no interrupt or event-vector mechanism; those ports remain reserved.
 - The image region has no relocation or protection model beyond the loader's
   payload-length check.

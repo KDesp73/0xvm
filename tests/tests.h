@@ -13,5 +13,7 @@ int test_device(void);
 int test_conformance(void);
 /* Runs the disassembler test cases and returns the number of failed checks. */
 int test_dis(void);
+/* Runs the shared host-device test cases and returns the number of failed checks. */
+int test_host(void);
 
 #endif /* TESTS_H */

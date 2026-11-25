@@ -40,6 +40,21 @@ struct VmState;
 #define VM_CONSOLE_GETS_LEN  0x1Au  /* read: length from the last GETS */
 #define VM_CONSOLE_GETI      0x1Bu  /* read: one integer from stdin */
 
+/* Device 2: Screen (optional host-provided device). */
+#define VM_SCREEN_WIDTH      0x20u  /* read: framebuffer width in pixels */
+#define VM_SCREEN_HEIGHT     0x21u  /* read: framebuffer height in pixels */
+#define VM_SCREEN_COLOR      0x22u  /* write: RGB colour (low 24 bits) */
+#define VM_SCREEN_PIXEL      0x23u  /* write: x in high 16 bits, y in low 16 */
+#define VM_SCREEN_DRAW       0x24u  /* write: present the framebuffer */
+#define VM_SCREEN_CLEAR      0x25u  /* write: fill with the current colour */
+
+/* Device 3: Controller (optional host-provided device). */
+#define VM_CONTROLLER_KEY    0x30u  /* read: next key-down, 0 if none (consumes) */
+#define VM_CONTROLLER_QUIT   0x31u  /* read: 1 after a window-close request */
+
+/* Device 4: Timer (optional host-provided device). */
+#define VM_TIMER_MS          0x40u  /* read: milliseconds since host start */
+
 /*
  * Opcode numbers are explicit because retired I/O opcodes stay reserved.
  * 0x0E and 0x41..0x45 are permanently unassigned; 0x80/0x81 are the device

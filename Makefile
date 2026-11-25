@@ -29,7 +29,14 @@ TEST_BIN  = $(BUILD_DIR)/0xtest
 
 TOOL_NAMES = vm asm dis rom
 TOOLS      = $(foreach tool,$(TOOL_NAMES),$(BUILD_DIR)/0x$(tool))
-COMMON_OBJ = $(BUILD_DIR)/tools_common.o
+COMMON_OBJ = $(BUILD_DIR)/tools_common.o $(BUILD_DIR)/host.o
+
+SDL3_FOUND := $(shell pkg-config --exists sdl3 2>/dev/null && echo yes)
+ifeq ($(SDL3_FOUND),yes)
+    SDL3_CFLAGS := $(shell pkg-config --cflags sdl3)
+    SDL3_LIBS   := $(shell pkg-config --libs sdl3)
+    SDL_HOST    := $(BUILD_DIR)/0xvm-sdl
+endif
 
 LIB_STATIC = $(BUILD_DIR)/lib0xvm.a
 LIB_SHARED = $(BUILD_DIR)/lib0xvm.so
@@ -60,7 +67,7 @@ endif
 TOTAL_FILES := $(words $(SRC))
 
 .PHONY: all
-all: libs $(TOOLS) $(TEST_BIN) $(CONFORMANCE_ROM) ## Build libraries, tools, tests, and conformance ROM
+all: libs $(TOOLS) $(SDL_HOST) $(TEST_BIN) $(CONFORMANCE_ROM) ## Build libraries, tools, hosts, tests, and conformance ROM
 
 .PHONY: libs
 libs: $(LIBS) ## Build static and shared lib0xvm
@@ -82,9 +89,22 @@ $(BUILD_DIR)/test_%.o: $(TEST_DIR)/%.c | $(BUILD_DIR) ## Compile a test source f
 	@echo "[INFO] Compiling test $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(COMMON_OBJ): $(APPS_DIR)/common/tools.c $(APPS_DIR)/common/tools.h | $(BUILD_DIR)
+$(BUILD_DIR)/tools_common.o: $(APPS_DIR)/common/tools.c $(APPS_DIR)/common/tools.h | $(BUILD_DIR)
 	@echo "[INFO] Compiling tool helpers"
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD_DIR)/host.o: $(APPS_DIR)/common/host.c $(APPS_DIR)/common/host.h | $(BUILD_DIR)
+	@echo "[INFO] Compiling shared host devices"
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+ifneq ($(SDL_HOST),)
+$(SDL_HOST): CFLAGS += $(SDL3_CFLAGS)
+$(SDL_HOST): LDFLAGS += $(SDL3_LIBS)
+$(SDL_HOST): $(APPS_DIR)/vm-sdl/main.c $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
+	@echo "[INFO] Building SDL3 host"
+	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/app_0xvm-sdl.o
+	$(CC) $(BUILD_DIR)/app_0xvm-sdl.o $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
+endif
 
 $(LIB_STATIC): $(OBJ) | $(BUILD_DIR)
 	@echo "[INFO] Building lib0xvm (static)"
@@ -110,7 +130,8 @@ $(TEST_BIN): $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 	$(CC) $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
 
 -include $(DEP) $(TEST_DEP) $(TEST_MAIN:.o=.d) $(COMMON_OBJ:.o=.d) \
-	$(patsubst %,$(BUILD_DIR)/app_0x%.d,$(TOOL_NAMES))
+	$(patsubst %,$(BUILD_DIR)/app_0x%.d,$(TOOL_NAMES)) \
+	$(if $(SDL_HOST),$(BUILD_DIR)/app_0xvm-sdl.d)
 
 $(CONFORMANCE_ROM): $(TEST_DIR)/conformance.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
 	@echo "[INFO] Building conformance ROM"
@@ -127,10 +148,31 @@ conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM thro
 	@diff -u $(CONFORMANCE_EXPECTED) $(BUILD_DIR)/conformance-actual.txt
 
 .PHONY: test
-test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and CLI conformance check
+test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformance checks
 	@echo "[RUN] 0xtest"
 	@$(TEST_BIN)
 	@$(MAKE) --no-print-directory conformance-check
+	@$(MAKE) --no-print-directory sdl-check
+
+.PHONY: sdl
+ifeq ($(SDL_HOST),)
+sdl:
+	@echo "[WARN] SDL3 not found via pkg-config; skipping SDL host"
+else
+sdl: $(SDL_HOST) ## Build the SDL3 host
+endif
+
+.PHONY: sdl-check
+ifeq ($(SDL_HOST),)
+sdl-check:
+	@echo "[WARN] SDL3 not found via pkg-config; skipping SDL conformance check"
+else
+sdl-check: conformance $(SDL_HOST) ## Run the conformance ROM through the SDL3 host
+	@echo "[RUN] SDL3 conformance check (dummy video)"
+	@printf 'B-7\nhey\n' | SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(CONFORMANCE_ROM) 2>/dev/null \
+		| sed '/^\[INFO\] /d' > $(BUILD_DIR)/conformance-sdl-actual.txt
+	@diff -u $(CONFORMANCE_EXPECTED) $(BUILD_DIR)/conformance-sdl-actual.txt
+endif
 
 .PHONY: clean
 clean: ## Remove all build files, libraries, and tools

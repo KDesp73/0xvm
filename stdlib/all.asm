@@ -4,3 +4,6 @@
 INCLUDE "arith.asm"
 INCLUDE "locals.asm"
 INCLUDE "console.asm"
+INCLUDE "screen.asm"
+INCLUDE "controller.asm"
+INCLUDE "timer.asm"

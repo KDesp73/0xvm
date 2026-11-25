@@ -31,7 +31,7 @@ int main(int argc, char **argv)
     cli_args_free(&args);
 
     int failures = test_asm() + test_rom() + test_device() +
-                   test_conformance() + test_dis() + test_vm();
+                   test_conformance() + test_dis() + test_vm() + test_host();
 
     if (failures) {
         fprintf(stderr, "%d test check(s) failed\n", failures);

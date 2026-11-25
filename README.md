@@ -12,20 +12,24 @@ for all I/O.
 ## Build
 
 ```sh
-make all              # build lib0xvm, the 0x* tools, 0xtest, and the conformance ROM
-make test             # run 0xtest and the CLI conformance check
+make all              # build lib0xvm, the 0x* tools, hosts, tests, conformance ROM
+make test             # run 0xtest and the CLI/SDL conformance checks
 make conformance      # write build/conformance-v2.rom
 make conformance-check # run that ROM through 0xvm and diff the golden transcript
+make sdl              # build 0xvm-sdl (skipped when SDL3 is unavailable)
+make sdl-check        # run the conformance ROM through 0xvm-sdl with dummy video
 ```
 
-`make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, and five tools:
-`0xvm`, `0xasm`, `0xdis`, `0xrom`, and `0xtest`. The four CLI tools accept
-`-f/--file`, `-v/--version`, and `-h/--help`; `0xtest` accepts `-v` and `-h`.
+`make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, five tools
+(`0xvm`, `0xasm`, `0xdis`, `0xrom`, `0xtest`), and — when `pkg-config sdl3`
+succeeds — `build/0xvm-sdl`. The CLI tools accept `-f/--file`, `-v/--version`,
+and `-h/--help`; `0xtest` accepts `-v` and `-h`.
 
 | Tool | Purpose |
 | --- | --- |
-| `0xvm` | run a source file or ROM; `-t` traces, `-D` prefixes output with ticks |
-| `0xasm` | assemble source into a VMIM ROM; `-o` sets the output path |
+| `0xvm` | CLI host: run a source file or ROM; `-t` traces, `-D` prefixes output with ticks |
+| `0xvm-sdl` | SDL3 host: Screen, Controller, and timer devices; `-W`/`-H` set the framebuffer size |
+| `0xasm` | assemble source into a VMIM ROM; `-o` sets the output path, `-I` adds include paths |
 | `0xdis` | disassemble a source file or ROM |
 | `0xrom` | inspect and validate a ROM header |
 
@@ -35,6 +39,7 @@ make conformance-check # run that ROM through 0xvm and diff the golden transcrip
 ./build/0xasm -f examples/counter.asm -o counter.rom
 ./build/0xrom -f counter.rom
 ./build/0xdis -f counter.rom
+./build/0xvm-sdl -f paint.asm -W 640 -H 480   # needs SDL3
 ```
 
 The conformance image is a real ROM, not just a C test. It exercises every

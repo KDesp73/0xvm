@@ -207,7 +207,9 @@ VmStatus write(void *ctx, VmState *vm, uint8_t port, int64_t value);
 ```
 
 Callbacks return `VM_OK`, `VM_HALTED`, or `VM_ERR_IO`. The callback context and
-all formatting/input policy belong to the host. The CLI supplies these ports:
+all formatting/input policy belong to the host. Both supplied hosts share the
+System/Console implementation in `apps/common/host.c`; `0xvm-sdl` also supplies
+Screen, Controller, and timer ports:
 
 | Port | Name | Access | Meaning |
 | ---: | --- | --- | --- |
@@ -226,9 +228,22 @@ all formatting/input policy belong to the host. The CLI supplies these ports:
 | `0x19` | `VM_CONSOLE_GETS` | write | read a line into RAM (value ignored) |
 | `0x1A` | `VM_CONSOLE_GETS_LEN` | read | length from the last `GETS` |
 | `0x1B` | `VM_CONSOLE_GETI` | read | one integer from stdin |
+| `0x20` | `VM_SCREEN_WIDTH` | read | framebuffer width in pixels |
+| `0x21` | `VM_SCREEN_HEIGHT` | read | framebuffer height in pixels |
+| `0x22` | `VM_SCREEN_COLOR` | write | RGB colour in the low 24 bits |
+| `0x23` | `VM_SCREEN_PIXEL` | write | `x` in the high 16 bits, `y` in the low 16 |
+| `0x24` | `VM_SCREEN_DRAW` | write | present the framebuffer (value ignored) |
+| `0x25` | `VM_SCREEN_CLEAR` | write | fill with the current colour (value ignored) |
+| `0x30` | `VM_CONTROLLER_KEY` | read | next key-down, `0` if none (consumes) |
+| `0x31` | `VM_CONTROLLER_QUIT` | read | `1` after a window-close request |
+| `0x40` | `VM_TIMER_MS` | read | milliseconds since host start |
 
-Other hosts may assign different meanings to other ports; a ROM that depends on
-a port must also depend on the host providing it.
+Screen, Controller, and timer ports are optional: a ROM that uses them depends
+on a host that provides them, and reads of unprovided ports return `VM_ERR_IO`.
+Controller key codes are `0` for none, `1..4` for up/down/left/right, `5` for
+space, `6` for enter, `7` for escape, and `32..126` for printable ASCII. A key
+is delivered once and cleared by the read. Other hosts may assign different
+meanings to other ports.
 
 Read ports are synchronous and blocking: `GETC`, `GETI`, and `GETS` wait for host
 input and have no ready/status port. `GETC` reports EOF as `0`; `GETI` reports
@@ -255,14 +270,15 @@ The current codebase conforms to this contract:
    `PRINT*`/`READ*` are optional stdlib macros that expand to Console ports.
 6. `0xvm` accepts assembly source or a ROM, `0xasm` writes a ROM, `0xdis`
    decodes source or a ROM (labelling reserved bytes and reporting truncated
-   immediates), `0xrom` validates and prints ROM headers, and `0xvm` installs
-   System/Console device callbacks.
+   immediates), `0xrom` validates and prints ROM headers, and `0xvm-sdl` installs
+   System/Console callbacks; `0xvm-sdl` also adds Screen, Controller, and timer.
 7. `tests/conformance.asm` is an executable v2 conformance image. It exercises
    every opcode and immediate shape, the full System/Console port set, and ends
    with `VM_SYS_HALT`. A passing run emits the golden transcript in
    `tests/conformance.expected`; the CLI input is `B-7\nhey\n`.
-   `make conformance-check` runs the shipped ROM through `0xvm`, and `0xtest`
-   runs the same image through a fresh scripted host.
+   `make conformance-check` runs the shipped ROM through `0xvm`, `make sdl-check`
+   runs it through `0xvm-sdl` with dummy video, and `0xtest` runs the same image
+   through a fresh scripted host.
 8. C-level conformance cases check atomic errors for reserved/retired opcodes,
    truncated immediates at the RAM boundary, stack overflow/underflow, division
    by zero, bad addresses and jump targets, bad frames and locals, heap
