@@ -4,25 +4,16 @@
 #include <math.h>
 #include <string.h>
 
-static unsigned immediate_size(uint8_t op)
+static const uint8_t immediate_size_table[256] = {
+    [OP_PUSH] = 8u, [OP_PUSHF] = 8u,
+    [OP_JMP] = 2u, [OP_JMP_Z] = 2u, [OP_CALL] = 2u,
+    [OP_ENTER] = 1u, [OP_LOCAL_GET] = 1u, [OP_LOCAL_SET] = 1u,
+    [OP_DEI] = 1u, [OP_DEO] = 1u,
+};
+
+static inline unsigned immediate_size(uint8_t op)
 {
-    switch ((VmOpcode)op) {
-        case OP_PUSH:
-        case OP_PUSHF:
-            return 8u;
-        case OP_JMP:
-        case OP_JMP_Z:
-        case OP_CALL:
-            return 2u;
-        case OP_ENTER:
-        case OP_LOCAL_GET:
-        case OP_LOCAL_SET:
-        case OP_DEI:
-        case OP_DEO:
-            return 1u;
-        default:
-            return 0u;
-    }
+    return immediate_size_table[op];
 }
 
 unsigned vm_inst_size(uint8_t op)
@@ -30,11 +21,60 @@ unsigned vm_inst_size(uint8_t op)
     return 1u + immediate_size(op);
 }
 
-static uint64_t read_be(const uint8_t *p, unsigned width)
+static inline uint64_t read_be(const uint8_t *p, unsigned width)
 {
-    uint64_t v = 0;
-    for (unsigned i = 0; i < width; i++) v = (v << 8) | (uint64_t)p[i];
-    return v;
+    switch (width) {
+        case 1u: return (uint64_t)p[0];
+        case 2u: return ((uint64_t)p[0] << 8) | (uint64_t)p[1];
+        case 4u:
+            return ((uint64_t)p[0] << 24) | ((uint64_t)p[1] << 16) |
+                   ((uint64_t)p[2] << 8) | (uint64_t)p[3];
+        case 8u:
+            return ((uint64_t)p[0] << 56) | ((uint64_t)p[1] << 48) |
+                   ((uint64_t)p[2] << 40) | ((uint64_t)p[3] << 32) |
+                   ((uint64_t)p[4] << 24) | ((uint64_t)p[5] << 16) |
+                   ((uint64_t)p[6] << 8) | (uint64_t)p[7];
+        default: {
+            uint64_t v = 0;
+            for (unsigned i = 0; i < width; i++) v = (v << 8) | (uint64_t)p[i];
+            return v;
+        }
+    }
+}
+
+static inline void write_be(uint8_t *p, uint64_t v, unsigned width)
+{
+    switch (width) {
+        case 1u:
+            p[0] = (uint8_t)v;
+            return;
+        case 2u:
+            p[0] = (uint8_t)(v >> 8);
+            p[1] = (uint8_t)v;
+            return;
+        case 4u:
+            p[0] = (uint8_t)(v >> 24);
+            p[1] = (uint8_t)(v >> 16);
+            p[2] = (uint8_t)(v >> 8);
+            p[3] = (uint8_t)v;
+            return;
+        case 8u:
+            p[0] = (uint8_t)(v >> 56);
+            p[1] = (uint8_t)(v >> 48);
+            p[2] = (uint8_t)(v >> 40);
+            p[3] = (uint8_t)(v >> 32);
+            p[4] = (uint8_t)(v >> 24);
+            p[5] = (uint8_t)(v >> 16);
+            p[6] = (uint8_t)(v >> 8);
+            p[7] = (uint8_t)v;
+            return;
+        default:
+            for (unsigned i = 0; i < width; i++) {
+                p[width - 1u - i] = (uint8_t)(v & 0xFFu);
+                v >>= 8;
+            }
+            return;
+    }
 }
 
 static uint16_t align_up8(uint16_t n)
@@ -553,11 +593,7 @@ VmStatus vm_step(VmState *vm)
             a = vm->stack[vm->sp - 1u]; /* addr on top */
             b = vm->stack[vm->sp - 2u]; /* val */
             if (!mem_range_ok(a, width)) return VM_ERR_BAD_ADDR;
-            uint64_t v = (uint64_t)b;
-            for (unsigned i = 0; i < width; i++) {
-                vm->mem[(size_t)a + width - 1u - i] = (uint8_t)(v & 0xFFu);
-                v >>= 8;
-            }
+            write_be(vm->mem + (size_t)a, (uint64_t)b, width);
             vm->sp -= 2u;
             vm->ip = next;
             vm->ticks++;

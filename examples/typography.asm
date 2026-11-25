@@ -58,6 +58,8 @@ EQU G_LAST       28           ; timestamp of the last frame
 EQU G_FRAMES     32           ; frames drawn (for bounded smoke runs)
 EQU G_CX         36           ; caret column
 EQU G_CY         40           ; caret row
+EQU G_DIRTY      44           ; redraw requested
+EQU G_SLEEP      48           ; idle sleep ms
 
 ; ------------------------------------------------------------------ data
 
@@ -915,17 +917,67 @@ start:
     CALL draw_frame
     POP
     POP
+    PUSH 1
+    PUSH G_DIRTY
+    STORE32
 
 ; ------------------------------------------------------------------ main loop
 
 main_loop:
+    QUIT_REQUESTED
+    JMP_Z no_quit_early
+    JMP done
+no_quit_early:
+    READ_KEY
+    DUP
+    JMP_Z no_key_early
+    PUSH 1
+    PUSH G_DIRTY
+    STORE32
+    JMP key_present
+no_key_early:
+    POP
+    PUSH G_DIRTY
+    LOAD32
+    JMP_Z idle_wait
+    JMP frame_ready
+idle_wait:
     NOW_MS
     PUSH G_LAST
     LOAD32
     SUB
     PUSH FRAME_MS
     CMP_LT
+    JMP_Z idle_wait_more
+    JMP frame_ready
+idle_wait_more:
+    PUSH FRAME_MS
+    NOW_MS
+    PUSH G_LAST
+    LOAD32
+    SUB
+    SUB
+    PUSH G_SLEEP
+    STORE32
+    PUSH G_SLEEP
+    LOAD32
+    PUSH 0
+    CMP_LE
     JMP_Z frame_ready
+    PUSH G_SLEEP
+    LOAD32
+    PUSH 50
+    CMP_GT
+    JMP_Z sleep_cap
+    JMP sleep_do
+sleep_cap:
+    PUSH 50
+    PUSH G_SLEEP
+    STORE32
+sleep_do:
+    PUSH G_SLEEP
+    LOAD32
+    DEO 0x41
     JMP main_loop
 
 frame_ready:
@@ -940,6 +992,9 @@ no_quit:
     READ_KEY
     DUP
     JMP_Z key_done
+    PUSH 1
+    PUSH G_DIRTY
+    STORE32
     JMP key_present
 key_present:
     DUP
@@ -1070,10 +1125,17 @@ key_drop:
     POP
 after_key:
 
+    PUSH G_DIRTY
+    LOAD32
+    JMP_Z skip_draw
     PUSH 0
     CALL draw_frame
     POP
     POP
+    PUSH 0
+    PUSH G_DIRTY
+    STORE32
+skip_draw:
 
     PUSH G_FRAMES
     LOAD32
@@ -1085,7 +1147,7 @@ after_key:
     PUSH G_FRAMES
     LOAD32
     PUSH MAX_FRAMES
-    CMP_GE
+    CMP_LT
     JMP_Z main_loop
 
 done:

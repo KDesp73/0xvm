@@ -2,9 +2,11 @@
 
 #include <inttypes.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "asm.h"
 #include "host.h"
@@ -27,6 +29,12 @@ typedef struct {
     int64_t key;        /* queued key-down, consumed by VM_CONTROLLER_KEY */
     bool quit;          /* set by a window-close event */
     Uint64 start_ms;
+    uint64_t present_count;
+    uint64_t pixel_count;
+    uint64_t clear_count;
+    uint64_t poll_count;
+    uint64_t poll_ns;
+    uint64_t present_ns;
 } SdlDevice;
 
 /* Portable VM key codes: 1..4 = arrows, 5 = space, 6 = enter, 7 = escape,
@@ -49,8 +57,16 @@ static int64_t map_key(SDL_Keycode key)
     return 0;
 }
 
+static inline uint64_t mono_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
 static void sdl_poll(SdlDevice *d)
 {
+    uint64_t t0 = mono_ns();
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) {
@@ -62,16 +78,21 @@ static void sdl_poll(SdlDevice *d)
             if (code != 0 && (!event.key.repeat || code <= 4)) d->key = code;
         }
     }
+    d->poll_ns += mono_ns() - t0;
+    d->poll_count++;
 }
 
 static bool sdl_present(SdlDevice *d)
 {
+    uint64_t t0 = mono_ns();
     int pitch = d->width * (int)sizeof *d->pixels;
-    if (!SDL_UpdateTexture(d->texture, NULL, d->pixels, pitch)) return false;
-    if (!SDL_RenderClear(d->renderer)) return false;
-    if (!SDL_RenderTexture(d->renderer, d->texture, NULL, NULL)) return false;
-    SDL_RenderPresent(d->renderer);
-    return true;
+    bool ok = SDL_UpdateTexture(d->texture, NULL, d->pixels, pitch) &&
+              SDL_RenderClear(d->renderer) &&
+              SDL_RenderTexture(d->renderer, d->texture, NULL, NULL);
+    if (ok) SDL_RenderPresent(d->renderer);
+    d->present_ns += mono_ns() - t0;
+    d->present_count++;
+    return ok;
 }
 
 static void sdl_device_free(SdlDevice *d);
@@ -153,6 +174,9 @@ static VmStatus sdl_read(void *ctx, VmState *vm, uint8_t port, int64_t *out)
         case VM_TIMER_MS:
             *out = (int64_t)(SDL_GetTicks() - d->start_ms);
             return VM_OK;
+        case 0x41u: /* host extension: sleep ms, not part of frozen ABI */
+            *out = 0;
+            return VM_OK;
         default:
             return VM_ERR_IO;
     }
@@ -179,6 +203,7 @@ static VmStatus sdl_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
             if (x >= (uint32_t)d->width || y >= (uint32_t)d->height)
                 return VM_ERR_IO;
             d->pixels[(size_t)y * (size_t)d->width + x] = d->color;
+            d->pixel_count++;
             return VM_OK;
         }
         case VM_SCREEN_DRAW:
@@ -186,6 +211,13 @@ static VmStatus sdl_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
         case VM_SCREEN_CLEAR: {
             size_t count = (size_t)d->width * (size_t)d->height;
             for (size_t i = 0u; i < count; i++) d->pixels[i] = d->color;
+            d->clear_count++;
+            return VM_OK;
+        }
+        case 0x41u: { /* host extension: sleep ms */
+            int64_t ms = value < 0 ? 0 : value;
+            if (ms > 1000) ms = 1000;
+            if (ms > 0) SDL_Delay((Uint32)ms);
             return VM_OK;
         }
         default:
@@ -199,7 +231,7 @@ static int sdl_device_add(VmHost *host, SdlDevice *d)
                  sdl_read, sdl_write) != 0) return -1;
     if (host_add(host, VM_CONTROLLER_KEY, VM_CONTROLLER_QUIT, d,
                  sdl_read, sdl_write) != 0) return -1;
-    if (host_add(host, VM_TIMER_MS, VM_TIMER_MS, d,
+    if (host_add(host, VM_TIMER_MS, 0x41u, d,
                  sdl_read, sdl_write) != 0) return -1;
     return 0;
 }
@@ -241,17 +273,32 @@ static int run(const char *path, int width, int height, bool debug)
     }
     free(filebuf);
 
+    uint64_t run_t0 = mono_ns();
     if (st == VM_OK) {
+        const uint64_t poll_every = 1024u;
+        uint64_t since_poll = poll_every;
         for (;;) {
-            sdl_poll(&sdl);
+            if (since_poll >= poll_every) {
+                sdl_poll(&sdl);
+                since_poll = 0u;
+            }
             st = vm_step(&vm);
+            since_poll++;
             if (st != VM_OK) break;
         }
     }
+    uint64_t run_ns = mono_ns() - run_t0;
+    double run_s = (double)run_ns / 1e9;
+    double mips = run_s > 0.0 ? (double)vm.ticks / run_s / 1e6 : 0.0;
     if (st != VM_OK && st != VM_HALTED)
         ERRO("Run failed: %s", vm_status_str(st));
-    INFO("Finished with status: %s (total ticks=%" PRIu64 ")",
-         vm_status_str(st), vm.ticks);
+    INFO("Finished with status: %s (total ticks=%" PRIu64 ", %.3fs, %.2f MIPS)",
+         vm_status_str(st), vm.ticks, run_s, mips);
+    INFO("SDL stats: polls=%" PRIu64 " poll_ms=%.2f presents=%" PRIu64
+         " present_ms=%.2f clears=%" PRIu64 " pixels=%" PRIu64,
+         sdl.poll_count, (double)sdl.poll_ns / 1e6,
+         sdl.present_count, (double)sdl.present_ns / 1e6,
+         sdl.clear_count, sdl.pixel_count);
 
     if (program) {
         asm_program_free(program);

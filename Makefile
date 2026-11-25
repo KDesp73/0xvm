@@ -3,7 +3,7 @@
 
 CC      ?= gcc
 CFLAGS  ?= -Wall -Wextra
-LDFLAGS ?=
+LDFLAGS ?= -lm
 
 SRC_DIR     = src
 INCLUDE_DIR = include
@@ -213,10 +213,10 @@ $(SNAKE_SMOKE_ROM): $(SNAKE_SMOKE_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm
 
 .PHONY: snake-check
 ifeq ($(SDL_HOST),)
-snake-check: $(SNAKE_ROM) ## Assemble the flagship Snake app
+snake-check: $(SNAKE_ROM) ## Assemble the flagship Snake app (or smoke-run with SDL3)
 	@echo "[RUN] Snake assembly check (SDL3 not found)"
 else
-snake-check: $(SNAKE_ROM) $(SNAKE_SMOKE_ROM) $(SDL_HOST) ## Assemble and smoke-run the flagship Snake app
+snake-check: $(SNAKE_ROM) $(SNAKE_SMOKE_ROM) $(SDL_HOST)
 	@echo "[RUN] Snake SDL smoke check (dummy video)"
 	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(SNAKE_SMOKE_ROM) -W 320 -H 240 2>&1); \
 		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
@@ -237,10 +237,10 @@ $(TYPOGRAPHY_SMOKE_ROM): $(TYPOGRAPHY_SMOKE_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xas
 
 .PHONY: typography-check
 ifeq ($(SDL_HOST),)
-typography-check: $(TYPOGRAPHY_ROM) ## Assemble the typography example
+typography-check: $(TYPOGRAPHY_ROM) ## Assemble the typography example (or smoke-run with SDL3)
 	@echo "[RUN] Typography assembly check (SDL3 not found)"
 else
-typography-check: $(TYPOGRAPHY_ROM) $(TYPOGRAPHY_SMOKE_ROM) $(SDL_HOST) ## Assemble and smoke-run the typography example
+typography-check: $(TYPOGRAPHY_ROM) $(TYPOGRAPHY_SMOKE_ROM) $(SDL_HOST)
 	@echo "[RUN] Typography SDL smoke check (dummy video)"
 	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(TYPOGRAPHY_SMOKE_ROM) -W 320 -H 240 2>&1); \
 		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
@@ -275,6 +275,26 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 ifeq ($(EMCC_FOUND),yes)
 	@$(MAKE) --no-print-directory wasm-check
 endif
+
+BENCH_RUNS ?= 5
+BENCH_DIR  := $(BUILD_DIR)/bench
+
+.PHONY: perf-check
+perf-check: $(BUILD_DIR)/0xvm $(CONFORMANCE_ROM) ## Check CLI timing/profile output
+	@echo "[RUN] CLI profile check"
+	@printf 'B-7\nhey\n' | ./$(BUILD_DIR)/0xvm -f $(CONFORMANCE_ROM) -p 2> $(BUILD_DIR)/perf-check.err > /dev/null
+	@grep -q '\[profile\] total ticks=' $(BUILD_DIR)/perf-check.err
+	@grep -q '\[profile\] PUSH' $(BUILD_DIR)/perf-check.err
+
+.PHONY: bench
+bench: $(BUILD_DIR)/0xvm $(CONFORMANCE_ROM) ## Run repeatable benchmarks and save JSON to build/bench/
+	@mkdir -p $(BENCH_DIR)
+	@python3 scripts/bench.py run --runs $(BENCH_RUNS) --output $(BENCH_DIR)/last.json
+
+.PHONY: bench-compare
+bench-compare: ## Compare bench JSON files: make bench-compare BASELINE=... CURRENT=... [THRESHOLD=0.10]
+	@test -n "$(BASELINE)" && test -n "$(CURRENT)" || { echo "Usage: make bench-compare BASELINE=... CURRENT=... [THRESHOLD=0.10]"; exit 1; }
+	@python3 scripts/bench.py compare "$(BASELINE)" "$(CURRENT)" --threshold $(or $(THRESHOLD),0.10)
 
 .PHONY: wasm
 ifeq ($(EMCC_FOUND),yes)
