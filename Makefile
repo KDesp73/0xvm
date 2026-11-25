@@ -48,6 +48,8 @@ LIB_STATIC = $(BUILD_DIR)/lib0xvm.a
 LIB_SHARED = $(BUILD_DIR)/lib0xvm.so
 CONFORMANCE_ROM = $(BUILD_DIR)/conformance-v2.rom
 SNAKE_ROM = $(BUILD_DIR)/snake.rom
+SNAKE_SMOKE_SRC = $(BUILD_DIR)/snake-smoke.asm
+SNAKE_SMOKE_ROM = $(BUILD_DIR)/snake-smoke.rom
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
@@ -161,9 +163,25 @@ $(SNAKE_ROM): examples/snake.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
 	@echo "[INFO] Building Snake ROM"
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
 
+$(SNAKE_SMOKE_SRC): examples/snake.asm | $(BUILD_DIR)
+	@sed -e 's/^EQU FRAME_MS    80/EQU FRAME_MS    1/' \
+	     -e 's/^EQU MAX_MOVES   300/EQU MAX_MOVES   12/' $< > $@
+
+$(SNAKE_SMOKE_ROM): $(SNAKE_SMOKE_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
 .PHONY: snake-check
+ifeq ($(SDL_HOST),)
 snake-check: $(SNAKE_ROM) ## Assemble the flagship Snake app
-	@echo "[RUN] Snake assembly check"
+	@echo "[RUN] Snake assembly check (SDL3 not found)"
+else
+snake-check: $(SNAKE_ROM) $(SNAKE_SMOKE_ROM) $(SDL_HOST) ## Assemble and smoke-run the flagship Snake app
+	@echo "[RUN] Snake SDL smoke check (dummy video)"
+	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(SNAKE_SMOKE_ROM) -W 320 -H 240 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+endif
 
 .PHONY: conformance-check
 conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM through the CLI host

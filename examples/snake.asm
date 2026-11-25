@@ -115,7 +115,6 @@ queue_input:
     READ_KEY
     DUP
     JMP_Z qi_none
-    POP
     DUP
     PUSH KEY_ESC
     CMP_EQ
@@ -203,6 +202,7 @@ qi_accept_right:
     JMP qi_drop
 qi_drop:
     POP
+    JMP qi_end
 qi_none:
     POP
 qi_end:
@@ -311,10 +311,10 @@ pf_ok:
 
 draw_cell:
     ENTER 7                     ; 0=packed, 1=colour, 2=px, 3=py, 4=row, 5=col
-    PUSH 3
+    PUSH 8
     PICK
     LOCAL_SET 0
-    PUSH 2
+    PUSH 7
     PICK
     LOCAL_SET 1
     LOCAL_GET 0
