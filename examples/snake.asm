@@ -687,7 +687,7 @@ keep_going:
 shift_loop:
     PUSH G_I
     LOAD32
-    PUSH 1
+    PUSH 0
     CMP_GE
     JMP_Z shift_done
     PUSH VEC
