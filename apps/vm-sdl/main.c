@@ -40,7 +40,8 @@ static int64_t map_key(SDL_Keycode key)
         case SDLK_RIGHT: return 4;
         case SDLK_SPACE: return 5;
         case SDLK_RETURN:
-        case SDLK_RETURN2: return 6;
+        case SDLK_RETURN2:
+        case SDLK_KP_ENTER: return 6;
         case SDLK_ESCAPE: return 7;
         default: break;
     }

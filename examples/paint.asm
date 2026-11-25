@@ -2,8 +2,9 @@
 ; Paint — an interactive demo for the SDL3 host (0xvm-sdl).
 ;
 ; Arrow keys move the brush, space toggles painting, enter cycles the colour,
-; 'c' clears the canvas, and escape (or closing the window) exits. A blinking
-; pixel in the top-left corner is driven by the host timer.
+; 'c' clears the canvas, and escape (or closing the window) exits. A palette
+; swatch at (1,0) always shows the selected colour; the blinking pixel at (0,0)
+; is driven by the host timer.
 ;
 ; Screen, Controller, and timer ports are optional: 0xvm does not provide them,
 ; so this program is meant for 0xvm-sdl. The startup banner uses Console ports,
@@ -284,6 +285,10 @@ key_done:
     ADD
     LOAD64
     SET_COLOR
+
+    ; Palette swatch: Enter is visible here even while the brush is up.
+    PLOT_XY 1, 0
+
     PUSH G_PAINT
     LOAD32
     JMP_Z brush_up
