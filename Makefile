@@ -10,6 +10,7 @@ INCLUDE_DIR = include
 BUILD_DIR   = build
 TEST_DIR    = tests
 APPS_DIR    = apps
+HOSTS_DIR   = hosts
 DEPS_DIR    = deps
 STDLIB_DIR  = stdlib
 STDLIB_SRC  = $(wildcard $(STDLIB_DIR)/*.asm)
@@ -27,9 +28,11 @@ TEST_DEP = $(TEST_OBJ:.o=.d)
 TEST_MAIN = $(BUILD_DIR)/app_0xtest.o
 TEST_BIN  = $(BUILD_DIR)/0xtest
 
-SINGLE_TOOL_NAMES = vm asm dis rom
-TOOL_NAMES = $(SINGLE_TOOL_NAMES) db
-TOOLS      = $(foreach tool,$(TOOL_NAMES),$(BUILD_DIR)/0x$(tool))
+CLI_HOST_SRC      = $(HOSTS_DIR)/cli/main.c
+CLI_HOST          = $(BUILD_DIR)/0xvm
+SINGLE_TOOL_NAMES = asm dis rom
+TOOL_NAMES        = vm $(SINGLE_TOOL_NAMES) db
+TOOLS             = $(foreach tool,$(TOOL_NAMES),$(BUILD_DIR)/0x$(tool))
 COMMON_OBJ = $(BUILD_DIR)/tools_common.o $(BUILD_DIR)/host.o
 
 DB_DIR  = $(APPS_DIR)/db
@@ -48,7 +51,7 @@ EMCC       ?= emcc
 NODE       ?= node
 EMCC_FOUND := $(shell command -v $(EMCC) >/dev/null 2>&1 && echo yes)
 NODE_FOUND := $(shell command -v $(NODE) >/dev/null 2>&1 && echo yes)
-WASM_DIR   = $(APPS_DIR)/vm-wasm
+WASM_DIR   = $(HOSTS_DIR)/wasm
 ifeq ($(EMCC_FOUND),yes)
     WASM_JS    := $(BUILD_DIR)/0xvm-wasm.js
     WASM_APP   := $(BUILD_DIR)/0xvm-app.js
@@ -72,7 +75,7 @@ else
 endif
 LIBS = $(LIB_STATIC) $(LIB_SHARED)
 
-CFLAGS += -I$(INCLUDE_DIR) -I$(APPS_DIR) -I$(APPS_DIR)/common -I$(DEPS_DIR) -I$(TEST_DIR)
+CFLAGS += -I$(INCLUDE_DIR) -I$(APPS_DIR) -I$(APPS_DIR)/common -I$(HOSTS_DIR) -I$(DEPS_DIR) -I$(TEST_DIR)
 CFLAGS += '-DASM_STDLIB_DIR="$(CURDIR)/$(STDLIB_DIR)"'
 CFLAGS += -MMD -MP -fPIC
 LDFLAGS +=
@@ -122,7 +125,7 @@ $(BUILD_DIR)/host.o: $(APPS_DIR)/common/host.c $(APPS_DIR)/common/host.h | $(BUI
 ifneq ($(SDL_HOST),)
 $(SDL_HOST): CFLAGS += $(SDL3_CFLAGS)
 $(SDL_HOST): LDFLAGS += $(SDL3_LIBS)
-$(SDL_HOST): $(APPS_DIR)/vm-sdl/main.c $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
+$(SDL_HOST): $(HOSTS_DIR)/sdl3/main.c $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 	@echo "[INFO] Building SDL3 host"
 	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/app_0xvm-sdl.o
 	$(CC) $(BUILD_DIR)/app_0xvm-sdl.o $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
@@ -157,6 +160,11 @@ $(LIB_SHARED): $(OBJ) | $(BUILD_DIR)
 
 .PRECIOUS: $(OBJ) $(TEST_OBJ) $(COMMON_OBJ) $(DB_OBJ)
 
+$(CLI_HOST): $(CLI_HOST_SRC) $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
+	@echo "[INFO] Building CLI host"
+	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/app_0xvm.o
+	$(CC) $(BUILD_DIR)/app_0xvm.o $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
+
 $(foreach tool,$(SINGLE_TOOL_NAMES),$(BUILD_DIR)/0x$(tool)): $(BUILD_DIR)/0x%: $(APPS_DIR)/%/main.c $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 	@echo "[INFO] Building tool '0x$*'"
 	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/app_0x$*.o
@@ -179,7 +187,7 @@ $(TEST_BIN): $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 	$(CC) $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
 
 -include $(DEP) $(TEST_DEP) $(TEST_MAIN:.o=.d) $(COMMON_OBJ:.o=.d) \
-	$(patsubst %,$(BUILD_DIR)/app_0x%.d,$(SINGLE_TOOL_NAMES)) $(DB_DEP) \
+	$(patsubst %,$(BUILD_DIR)/app_0x%.d,vm $(SINGLE_TOOL_NAMES)) $(DB_DEP) \
 	$(if $(SDL_HOST),$(BUILD_DIR)/app_0xvm-sdl.d)
 
 $(CONFORMANCE_ROM): $(TEST_DIR)/conformance.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)

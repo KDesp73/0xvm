@@ -51,6 +51,9 @@ map to the portable Controller codes, and Console text appears beside the canvas
 | `0xrom` | inspect and validate a ROM header |
 | `0xdb` | interactive debugger: breakpoints, stepping, stack/RAM/frame dumps |
 
+Host sources live under `hosts/`; tools and shared helpers stay under `apps/`.
+See `hosts/README.md` for host-specific build and run notes.
+
 ```sh
 ./build/0xvm -f examples/counter.asm
 ./build/0xvm -t -f examples/gcd.asm

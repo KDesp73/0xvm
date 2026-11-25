@@ -11,7 +11,7 @@
 
 #include "vm.h"
 
-/* Implemented by apps/vm-wasm/library.js. */
+/* Implemented by hosts/wasm/library.js. */
 extern void vmw_js_screen_init(int width, int height);
 extern void vmw_js_screen_color(int r, int g, int b);
 extern void vmw_js_screen_pixel(int x, int y);
