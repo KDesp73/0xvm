@@ -54,9 +54,11 @@ static void sdl_poll(SdlDevice *d)
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) {
             d->quit = true;
-        } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        } else if (event.type == SDL_EVENT_KEY_DOWN) {
             int64_t code = map_key(event.key.key);
-            if (code != 0) d->key = code;
+            /* Arrow keys repeat so a held direction paints a continuous line;
+             * action keys (space/enter/escape) only fire on the first press. */
+            if (code != 0 && (!event.key.repeat || code <= 4)) d->key = code;
         }
     }
 }
