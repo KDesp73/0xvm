@@ -34,38 +34,42 @@ checks the SDL host too.
 
 ## Next
 
-The toolchain is complete; the missing layer is software. The next milestone is
-to make the platform pleasant to program and prove it with a real application.
+The toolchain and software layer are complete. The next milestone is to prove
+the platform with a real application.
 
-1. **Grow the software layer — [next].**
-   - Turn `stdlib/` into a tested runtime, still entirely opt-in source macros.
-     Every addition gets a golden test under `tests/`.
+1. **Grow the software layer — [done].**
+   - Turned `stdlib/` into a tested runtime, still entirely opt-in source macros.
+     Every addition has a golden test under `tests/`.
      - Strings: length, compare, concat, substring, find, and copy, all based on
        the `(addr, len)` convention used by `PRINT_STR` / `READ_STR`. Numeric
        formatting stays in the host Console ports.
-     - Collections: a dynamic array and a key/value table. With only 64 heap
-       blocks, use chunked/arena allocation rather than one allocation per entry.
+     - Collections: a dynamic array and a key/value table over an arena rather
+       than one allocation per entry.
      - Allocator policy: arena/bump wrapper, explicit-free helper, and a
        documented refcount pattern.
      - Utilities: a deterministic RNG, min/max/clamp, and bit helpers.
-   - Add one flagship app that exercises the whole stack at once. Snake on
-     `0xvm-sdl` is the target: Screen, Controller, and timer ports, heap for the
-     body, strings for the score, and RNG for food.
-   - Keep the debugger and conformance suite aligned with each addition.
+   - Kept the debugger and conformance suite aligned with each addition.
 
-2. **Browser / WASM host — [after the software layer].**
+2. **Flagship Snake app — [next].**
+   - Add one app that exercises the whole stack at once. Snake on `0xvm-sdl`
+     uses Screen, Controller, and timer ports, heap for the body, strings for
+     the score, and RNG for food.
+   - Keep console text I/O on terminal stdin/stdout; the SDL host exposes only
+     Screen, Controller, and timer devices.
+
+3. **Browser / WASM host — [after Snake].**
    - Add a browser host behind the same `VmDevice` callback split so programs
      can be shared by URL.
    - Keep the core, CLI tools, and test suite free of host GUI dependencies.
 
-3. **Lua-subset compiler — [after the runtime exists].**
+4. **Lua-subset compiler — [after the runtime exists].**
    - Compile numbers, strings, tables, `if`/`while`/`for`, and plain functions
      to `0xasm` text.
    - Target the `stdlib/` runtime routines instead of emitting raw heap and
      memory manipulation.
    - Emit line/symbol metadata so `0xdb` steps through the source language.
 
-4. **Richer debugger — [later].**
+5. **Richer debugger — [later].**
    - Watch/list expressions and conditional breakpoints once source-level
      variable metadata exists.
    - Consider typed source metadata for locals.

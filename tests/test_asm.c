@@ -370,6 +370,208 @@ static void test_stdlib_strings(void)
     asm_program_free(&prog);
 }
 
+static void test_stdlib_alloc(void)
+{
+    const char *src =
+        "INCLUDE \"alloc.asm\"\n"
+        "arena: DQ 0, 0, 0\n"
+        "    PUSH arena\n"
+        "    PUSH 64\n"
+        "    ARENA_INIT\n"
+        "    PUSH arena\n"
+        "    PUSH 5\n"
+        "    ARENA_ALLOC\n"
+        "    PUSH arena\n"
+        "    PUSH 100\n"
+        "    ARENA_ALLOC\n"
+        "    PUSH arena\n"
+        "    PUSH 8\n"
+        "    ADD\n"
+        "    LOAD64\n"
+        "    PUSH arena\n"
+        "    PUSH 16\n"
+        "    ADD\n"
+        "    LOAD64\n"
+        "    PUSH 4\n"
+        "    ALLOC_ZERO\n"
+        "    LOAD32\n"
+        "    PUSH 3\n"
+        "    PUSH 4\n"
+        "    ALLOC_ARRAY\n"
+        "    LOAD8\n"
+        "    PUSH arena\n"
+        "    ARENA_FREE\n"
+        "    PUSH arena\n"
+        "    LOAD64\n"
+        "    HALT\n";
+
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == 9u);
+        CHECK(vm.stack[0] == VM_HEAP_START);
+        CHECK(vm.stack[1] == VM_HEAP_START);
+        CHECK(vm.stack[2] == -1);
+        CHECK(vm.stack[3] == 8);
+        CHECK(vm.stack[4] == 64);
+        for (size_t i = 5u; i < 9u; i++) CHECK(vm.stack[i] == 0);
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+}
+
+static void test_stdlib_util(void)
+{
+    const char *src =
+        "INCLUDE \"util.asm\"\n"
+        "state: DQ 0\n"
+        "    PUSH 3\n"
+        "    PUSH 5\n"
+        "    MIN\n"
+        "    PUSH 3\n"
+        "    PUSH 5\n"
+        "    MAX\n"
+        "    PUSH 9\n"
+        "    PUSH 0\n"
+        "    PUSH 5\n"
+        "    CLAMP\n"
+        "    PUSH -2\n"
+        "    PUSH 0\n"
+        "    PUSH 5\n"
+        "    CLAMP\n"
+        "    PUSH -7\n"
+        "    ABS\n"
+        "    PUSH 9\n"
+        "    ALIGN8\n"
+        "    PUSH 1\n"
+        "    PUSH 3\n"
+        "    BIT_SET\n"
+        "    PUSH 15\n"
+        "    PUSH 2\n"
+        "    BIT_CLEAR\n"
+        "    PUSH 8\n"
+        "    PUSH 3\n"
+        "    BIT_TEST\n"
+        "    PUSH 7\n"
+        "    PUSH 3\n"
+        "    BIT_TEST\n"
+        "    PUSH state\n"
+        "    PUSH 1\n"
+        "    RNG_SEED\n"
+        "    PUSH state\n"
+        "    RNG_NEXT\n"
+        "    HALT\n";
+
+    static const int64_t expected[] = {
+        3, 5, 5, 0, 7, 16, 9, 11, 1, 0, 0,
+        (int64_t)UINT64_C(13473309256371520605)
+    };
+
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == sizeof expected / sizeof expected[0]);
+        for (size_t i = 0u; i < sizeof expected / sizeof expected[0]; i++) {
+            CHECK(vm.stack[i] == expected[i]);
+        }
+        CHECK((uint64_t)read_be(vm.mem + VM_IMAGE_START + 3u, 8u) ==
+              UINT64_C(1082269761));
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+}
+
+static void test_stdlib_collections(void)
+{
+    const char *src =
+        "INCLUDE \"collections.asm\"\n"
+        "arena: DQ 0, 0, 0\n"
+        "vec:   DQ 0, 0, 0, 0\n"
+        "map:   DQ 0, 0, 0, 0, 0\n"
+        "    PUSH arena\n"
+        "    PUSH 256\n"
+        "    ARENA_INIT\n"
+        "    PUSH vec\n"
+        "    PUSH arena\n"
+        "    VEC_INIT\n"
+        "    PUSH vec\n"
+        "    PUSH 11\n"
+        "    VEC_PUSH64\n"
+        "    PUSH vec\n"
+        "    PUSH 22\n"
+        "    VEC_PUSH64\n"
+        "    PUSH vec\n"
+        "    PUSH 33\n"
+        "    VEC_PUSH64\n"
+        "    PUSH vec\n"
+        "    VEC_LEN\n"
+        "    PUSH vec\n"
+        "    PUSH 0\n"
+        "    VEC_GET64\n"
+        "    PUSH vec\n"
+        "    PUSH 2\n"
+        "    VEC_GET64\n"
+        "    PUSH vec\n"
+        "    PUSH 1\n"
+        "    PUSH 99\n"
+        "    VEC_SET64\n"
+        "    PUSH vec\n"
+        "    PUSH 1\n"
+        "    VEC_GET64\n"
+        "    PUSH map\n"
+        "    PUSH arena\n"
+        "    PUSH 4\n"
+        "    MAP_INIT\n"
+        "    PUSH map\n"
+        "    PUSH 7\n"
+        "    PUSH 70\n"
+        "    MAP_SET\n"
+        "    PUSH map\n"
+        "    PUSH 9\n"
+        "    PUSH 90\n"
+        "    MAP_SET\n"
+        "    PUSH map\n"
+        "    PUSH 7\n"
+        "    PUSH 71\n"
+        "    MAP_SET\n"
+        "    PUSH map\n"
+        "    PUSH 7\n"
+        "    MAP_GET\n"
+        "    PUSH map\n"
+        "    PUSH 9\n"
+        "    MAP_GET\n"
+        "    PUSH map\n"
+        "    PUSH 8\n"
+        "    MAP_GET\n"
+        "    PUSH map\n"
+        "    PUSH 0\n"
+        "    PUSH 1\n"
+        "    MAP_SET\n"
+        "    HALT\n";
+
+    static const int64_t expected[] = {
+        VM_HEAP_START, 0, 0, 1, 2, 3, 11, 33, 0, 99, 0,
+        1, 1, 1, 71, 90, 0, 0
+    };
+
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    if (prog.len > 0u) {
+        VmState vm;
+        run_ok(&prog, &vm);
+        CHECK(vm.sp == sizeof expected / sizeof expected[0]);
+        for (size_t i = 0u; i < sizeof expected / sizeof expected[0]; i++) {
+            CHECK(vm.stack[i] == expected[i]);
+        }
+        vm_free(&vm);
+    }
+    asm_program_free(&prog);
+}
+
 static void test_stdlib_ports(void)
 {
     static const char *const names[] = {
@@ -857,6 +1059,9 @@ int test_asm(void)
     test_pseudo_opt_in();
     test_stdlib_mem();
     test_stdlib_strings();
+    test_stdlib_alloc();
+    test_stdlib_util();
+    test_stdlib_collections();
     test_stdlib_ports();
     test_data_directives();
     test_line_mapping();
