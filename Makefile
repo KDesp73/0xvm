@@ -47,6 +47,7 @@ endif
 LIB_STATIC = $(BUILD_DIR)/lib0xvm.a
 LIB_SHARED = $(BUILD_DIR)/lib0xvm.so
 CONFORMANCE_ROM = $(BUILD_DIR)/conformance-v2.rom
+SNAKE_ROM = $(BUILD_DIR)/snake.rom
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
@@ -156,6 +157,14 @@ $(CONFORMANCE_ROM): $(TEST_DIR)/conformance.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm
 .PHONY: conformance
 conformance: $(CONFORMANCE_ROM) ## Build the executable v2 conformance ROM
 
+$(SNAKE_ROM): examples/snake.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+	@echo "[INFO] Building Snake ROM"
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+.PHONY: snake-check
+snake-check: $(SNAKE_ROM) ## Assemble the flagship Snake app
+	@echo "[RUN] Snake assembly check"
+
 .PHONY: conformance-check
 conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM through the CLI host
 	@echo "[RUN] CLI conformance check"
@@ -176,6 +185,7 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@$(TEST_BIN)
 	@$(MAKE) --no-print-directory conformance-check
 	@$(MAKE) --no-print-directory debugger-check
+	@$(MAKE) --no-print-directory snake-check
 	@$(MAKE) --no-print-directory sdl-check
 
 .PHONY: sdl
