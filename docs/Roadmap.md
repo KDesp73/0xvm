@@ -34,8 +34,8 @@ checks the SDL host too.
 
 ## Next
 
-The toolchain and software layer are complete. The next milestone is to prove
-the platform with a real application.
+The toolchain, software layer, and flagship SDL app are complete. The next
+milestone is a browser host.
 
 1. **Grow the software layer — [done].**
    - Turned `stdlib/` into a tested runtime, still entirely opt-in source macros.
@@ -50,14 +50,14 @@ the platform with a real application.
      - Utilities: a deterministic RNG, min/max/clamp, and bit helpers.
    - Kept the debugger and conformance suite aligned with each addition.
 
-2. **Flagship Snake app — [next].**
+2. **Flagship Snake app — [done].**
    - Add one app that exercises the whole stack at once. Snake on `0xvm-sdl`
      uses Screen, Controller, and timer ports, heap for the body, strings for
      the score, and RNG for food.
    - Keep console text I/O on terminal stdin/stdout; the SDL host exposes only
      Screen, Controller, and timer devices.
 
-3. **Browser / WASM host — [after Snake].**
+3. **Browser / WASM host — [next].**
    - Add a browser host behind the same `VmDevice` callback split so programs
      can be shared by URL.
    - Keep the core, CLI tools, and test suite free of host GUI dependencies.
