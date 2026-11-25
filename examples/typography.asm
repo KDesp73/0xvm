@@ -487,7 +487,12 @@ dt_char:
     LOCAL_GET 9
     LOCAL_GET 5
     CMP_LT
-    JMP_Z dt_wrap_only
+    JMP_Z dt_out_of_range
+    JMP dt_draw
+dt_out_of_range:
+    POP                     ; drop code, row out of range
+    JMP dt_wrap_only
+dt_draw:
     LOCAL_GET 2
     LOCAL_GET 8
     PUSH PIXEL_W
@@ -615,17 +620,19 @@ ib_shift_loop:
     LOCAL_GET 0
     PUSH G_CARET
     LOAD32
-    CMP_LE
+    CMP_GT
     JMP_Z ib_shift_done
+ib_shift_do:
     PUSH G_TEXT
     LOAD32
     LOCAL_GET 0
+    PUSH 1
+    SUB
     ADD
     LOAD8
     PUSH G_TEXT
     LOAD32
     LOCAL_GET 0
-    INC
     ADD
     STORE8
     LOCAL_GET 0
@@ -889,20 +896,9 @@ start:
     PUSH G_TEXT
     STORE32
 
-    PUSH sample_text
-    DUP
-    STRLENZ
+    PUSH 0
     PUSH G_LEN
     STORE32
-    POP
-
-    PUSH G_TEXT
-    LOAD32
-    PUSH sample_text
-    PUSH G_LEN
-    LOAD32
-    STRCPY
-
     PUSH 0
     PUSH G_CARET
     STORE32
@@ -1092,7 +1088,6 @@ not_right:
     PUSH NEWLINE
     CALL insert_byte
     POP
-    POP
     JMP key_done
 not_enter:
     DUP
@@ -1102,7 +1097,6 @@ not_enter:
     POP
     PUSH FONT_FIRST
     CALL insert_byte
-    POP
     POP
     JMP key_done
 not_space:
@@ -1116,13 +1110,13 @@ not_space:
     JMP_Z key_drop
     CALL insert_byte
     POP
-    POP
+    JMP key_done
 key_done:
     POP
     JMP after_key
 key_drop:
     POP
-    POP
+    JMP after_key
 after_key:
 
     PUSH G_DIRTY
@@ -1147,8 +1141,9 @@ skip_draw:
     PUSH G_FRAMES
     LOAD32
     PUSH MAX_FRAMES
-    CMP_LT
-    JMP_Z main_loop
+    CMP_GE
+    JMP_Z done
+    JMP main_loop
 
 done:
     PUSH done_text
