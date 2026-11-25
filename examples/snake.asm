@@ -1,5 +1,5 @@
 ; =============================================================================
-; Snake — the 0xvm flagship app for the SDL3 host (0xvm-sdl).
+; Snake — the 0xvm flagship app for the SDL3 and browser hosts.
 ;
 ; Arrows steer, escape quits. The snake wraps at the edges, eats the red food,
 ; and grows. Body cells live in an arena-backed vector, food positions come
@@ -8,6 +8,7 @@
 ; are optional: the core 0xvm host does not provide them.
 ;
 ; Run with: ./build/0xvm-sdl -f examples/snake.asm [-W 320] [-H 240]
+;       or: make wasm && serve build/ and open 0xvm-wasm.html
 ; =============================================================================
 
 INCLUDE "all.asm"
@@ -17,9 +18,9 @@ INCLUDE "all.asm"
 EQU CELL        8
 EQU SPRITE      6
 EQU FRAME_MS    80          ; ~12.5 updates/second
-EQU MAX_MOVES   300         ; bounded run for unattended smoke tests
-EQU MAX_LEN     96
-EQU MAX_SCORE   20
+EQU MAX_MOVES   0           ; 0 = unlimited; smoke builds override this
+EQU MAX_SCORE   20          ; win after 20 apples
+EQU MAX_LEN     MAX_SCORE+1 ; score plus the original head
 EQU ARENA_CAP   1024
 
 EQU KEY_UP      1
@@ -662,6 +663,8 @@ no_hit:
     JMP_Z can_move
     JMP complete
 can_move:
+    PUSH MAX_MOVES
+    JMP_Z keep_going
     PUSH G_MOVES
     LOAD32
     INC
