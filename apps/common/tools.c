@@ -53,14 +53,21 @@ size_t tools_rom_payload_len(const uint8_t *buf, size_t len)
     return ((size_t)buf[8] << 8) | (size_t)buf[9];
 }
 
-bool tools_assemble_file(const char *path, AsmProgram *program)
+bool tools_assemble_file_ex(const char *path, AsmProgram *program,
+                            const char *const *include_dirs,
+                            size_t include_dir_count)
 {
-    if (asm_parse_file(program, path) != 0) {
+    if (asm_parse_file_ex(program, path, include_dirs, include_dir_count) != 0) {
         ERRO("Assembly failed: %s", program->error);
         asm_program_free(program);
         return false;
     }
     return true;
+}
+
+bool tools_assemble_file(const char *path, AsmProgram *program)
+{
+    return tools_assemble_file_ex(path, program, NULL, 0u);
 }
 
 VmStatus tools_load_source(VmState *vm, const char *path,

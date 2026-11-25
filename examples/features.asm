@@ -5,6 +5,8 @@
 ; labels resolve to absolute byte addresses, so LOAD64/PRINT_STR can read it
 ; directly. Heap addresses returned by ALLOC start at 0x4000.
 
+INCLUDE "all.asm"
+
 EQU MSG_LEN  6
 EQU VALUE    10
 EQU SLOT     8

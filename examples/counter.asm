@@ -2,6 +2,8 @@
 ; Comments start with ';', '#', or '//'. Labels are byte addresses in RAM.
 ; The accumulator lives in the addressable zero page at byte address 0.
 
+INCLUDE "console.asm"
+
         PUSH 0          ; initial accumulator value
         PUSH 0          ; zero-page byte address
         STORE32         ; mem[0..3] = 0

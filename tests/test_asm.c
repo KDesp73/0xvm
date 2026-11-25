@@ -188,6 +188,7 @@ static void test_new_opcodes(void)
 static void test_extended_opcodes(void)
 {
     const char *src =
+        "INCLUDE \"locals.asm\"\n"
         "SWAP\nOVER\nROT\nPICK\n"
         "LOAD8\nSTORE8\nLOAD16\nSTORE16\nLOAD32U\nLOAD64\nSTORE64\nFREE\n"
         "CALL fn\nCALL_I\nRET\nENTER 2\nGET 0\nSET 1\nJMP_I\n"
@@ -246,7 +247,8 @@ static void test_expressions_and_constants(void)
 static void test_pseudo_ops(void)
 {
     AsmProgram prog;
-    CHECK(asm_parse_string(&prog, "PUSH 5\nINC\nDEC\nNEG\nHALT\n") == 0);
+    CHECK(asm_parse_string(&prog,
+        "INCLUDE \"all.asm\"\nPUSH 5\nINC\nDEC\nNEG\nHALT\n") == 0);
     CHECK(inst_count(&prog) == 9u);
     if (prog.len > 0u) {
         CHECK(op_at(&prog, 1) == OP_PUSH && arg_at(&prog, 1) == 1);
@@ -268,6 +270,7 @@ static void test_console_pseudo_ops(void)
 {
     AsmProgram prog;
     CHECK(asm_parse_string(&prog,
+        "INCLUDE \"console.asm\"\n"
         "PUSH 65\nPRINT_CHAR\nPUSH 42\nPRINT\nPUSHF 1.5\nFPRINT\n"
         "READ_INT\nHALT\n") == 0);
     CHECK(inst_count(&prog) == 8u);
@@ -280,6 +283,7 @@ static void test_console_pseudo_ops(void)
     asm_program_free(&prog);
 
     CHECK(asm_parse_string(&prog,
+        "INCLUDE \"console.asm\"\n"
         "PUSH 0x0103\nPUSH 4\nPRINT_STR\n"
         "PUSH 0x0200\nPUSH 16\nREAD_STR\nHALT\n") == 0);
     CHECK(inst_count(&prog) == 14u);
@@ -293,6 +297,61 @@ static void test_console_pseudo_ops(void)
         CHECK(op_at(&prog, 10) == OP_PUSH && arg_at(&prog, 10) == 0);
         CHECK(op_at(&prog, 11) == OP_DEO && arg_at(&prog, 11) == VM_CONSOLE_GETS);
         CHECK(op_at(&prog, 12) == OP_DEI && arg_at(&prog, 12) == VM_CONSOLE_GETS_LEN);
+    }
+    asm_program_free(&prog);
+}
+
+static void test_stdlib_ports(void)
+{
+    static const char *const names[] = {
+        "SYS_VERSION", "SYS_DEBUG", "SYS_HALT",
+        "CONSOLE_PUTC", "CONSOLE_GETC", "CONSOLE_PUTI", "CONSOLE_PUTF",
+        "CONSOLE_PUTS_ADDR", "CONSOLE_PUTS_LEN", "CONSOLE_PUTS",
+        "CONSOLE_GETS_ADDR", "CONSOLE_GETS_MAX", "CONSOLE_GETS",
+        "CONSOLE_GETS_LEN", "CONSOLE_GETI"
+    };
+    static const int64_t expected[] = {
+        VM_SYS_VERSION, VM_SYS_DEBUG, VM_SYS_HALT,
+        VM_CONSOLE_PUTC, VM_CONSOLE_GETC, VM_CONSOLE_PUTI, VM_CONSOLE_PUTF,
+        VM_CONSOLE_PUTS_ADDR, VM_CONSOLE_PUTS_LEN, VM_CONSOLE_PUTS,
+        VM_CONSOLE_GETS_ADDR, VM_CONSOLE_GETS_MAX, VM_CONSOLE_GETS,
+        VM_CONSOLE_GETS_LEN, VM_CONSOLE_GETI
+    };
+    const size_t count = sizeof expected / sizeof expected[0];
+
+    char src[1024];
+    size_t used = (size_t)snprintf(src, sizeof src, "INCLUDE \"ports.asm\"\n");
+    for (size_t i = 0u; i < count; i++)
+        used += (size_t)snprintf(src + used, sizeof src - used, "DEO %s\n", names[i]);
+    snprintf(src + used, sizeof src - used, "HALT\n");
+
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog, src) == 0);
+    CHECK(inst_count(&prog) == count + 1u);
+    if (prog.len > 0u) {
+        for (size_t i = 0u; i < count; i++) {
+            CHECK(op_at(&prog, i) == OP_DEO);
+            CHECK(arg_at(&prog, i) == expected[i]);
+        }
+    }
+    asm_program_free(&prog);
+}
+
+static void test_pseudo_opt_in(void)
+{
+    /* Without an INCLUDE, readable names are just unknown instructions. */
+    expect_error("PUSH 5\nINC\nHALT\n", 2, "unknown instruction");
+    expect_error("PUSH 5\nPRINT\nHALT\n", 2, "unknown instruction");
+    expect_error("ENTER 1\nSET 0\nHALT\n", 2, "unknown instruction");
+
+    /* User macros own the stdlib names; nothing is reserved in the core. */
+    AsmProgram prog;
+    CHECK(asm_parse_string(&prog,
+        "MACRO PRINT\n    PUSH 7\n    DEO 0x12\nENDMACRO\nPRINT\nHALT\n") == 0);
+    if (prog.len > 0u) {
+        CHECK(inst_count(&prog) == 3u);
+        CHECK(op_at(&prog, 0) == OP_PUSH && arg_at(&prog, 0) == 7);
+        CHECK(op_at(&prog, 1) == OP_DEO && arg_at(&prog, 1) == VM_CONSOLE_PUTI);
     }
     asm_program_free(&prog);
 }
@@ -593,7 +652,7 @@ static void test_errors(void)
     expect_error("\n; only comments\n", 2, "no instructions");
     expect_error("STR hello\nHALT\n", 1, "quoted string");
     expect_error("EQU X 1\nEQU X 2\nHALT\n", 2, "duplicate constant");
-    expect_error("SET -1\nHALT\n", 1, "invalid local index");
+    expect_error("LOCAL_SET -1\nHALT\n", 1, "invalid local index");
     expect_error("ENTER 256\nHALT\n", 1, "invalid local index");
     expect_error("PUSHF abc\nHALT\n", 1, "invalid float");
     expect_error("DEI 256\nHALT\n", 1, "invalid port index");
@@ -619,6 +678,8 @@ int test_asm(void)
     test_includes();
     test_pseudo_ops();
     test_console_pseudo_ops();
+    test_pseudo_opt_in();
+    test_stdlib_ports();
     test_data_directives();
     test_line_mapping();
     test_errors();

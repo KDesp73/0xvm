@@ -5,6 +5,8 @@
 ;   mem[4..7] = b (462)
 ; result: 21
 
+INCLUDE "console.asm"
+
         PUSH 1071
         PUSH 0
         STORE32         ; mem[0..3] = a

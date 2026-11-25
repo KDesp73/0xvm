@@ -82,6 +82,8 @@ typedef struct {
 typedef struct {
     AsmProgram *out;
     char *src;
+    const char *const *include_dirs; /* caller-owned extra INCLUDE search paths */
+    size_t include_dir_count;
     char **owned_texts;  /* every owned source buffer, freed at the end */
     size_t text_count, text_cap;
     char **owned_paths;
@@ -159,15 +161,13 @@ static const OpDef OPS[] = {
     {"STORE64", OP_STORE64,  OPR_NONE},
     {"FREE",    OP_FREE,     OPR_NONE},
 
-    /* Procedures and locals (GET/SET are aliases) */
+    /* Procedures and locals */
     {"CALL",    OP_CALL,     OPR_TARGET},
     {"CALL_I",  OP_CALL_I,   OPR_NONE},
     {"RET",     OP_RET,      OPR_NONE},
     {"ENTER",   OP_ENTER,    OPR_INT},
     {"LOCAL_GET", OP_LOCAL_GET, OPR_LOCAL},
     {"LOCAL_SET", OP_LOCAL_SET, OPR_LOCAL},
-    {"GET",     OP_LOCAL_GET, OPR_LOCAL},
-    {"SET",     OP_LOCAL_SET, OPR_LOCAL},
     {"JMP_I",   OP_JMP_I,    OPR_NONE},
 
     /* Floating point */
@@ -699,15 +699,14 @@ static const Macro *find_macro(const Parser *p, const char *name, size_t len)
     return NULL;
 }
 
-/* Macro names may not hide instructions, built-in pseudo-ops, or directives. */
+/* Macro names may not hide instructions or directives. Readable aliases and
+ * pseudo-ops live in the opt-in stdlib and can be replaced by user macros. */
 static bool is_builtin_name(const char *s, size_t len)
 {
     static const char *const names[] = {
         "EQU", "DB", "DW", "DQ", "STR", "ALIGN", "INCLUDE",
         "IF", "IFDEF", "IFNDEF", "ELIF", "ELSE", "ENDIF",
-        "MACRO", "ENDMACRO", "ENDM",
-        "INC", "DEC", "NEG", "PRINT_CHAR", "PRINT", "FPRINT",
-        "READ_INT", "PRINT_STR", "READ_STR"
+        "MACRO", "ENDMACRO", "ENDM"
     };
     if (find_op(s, len)) return true;
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
@@ -868,21 +867,85 @@ static int quoted_path(const char *text, size_t len, char **out)
     return 0;
 }
 
+static bool path_exists(const char *path)
+{
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    fclose(file);
+    return true;
+}
+
+/* Returns an owned candidate path; caller frees it after use. */
+static char *join_path(const char *dir, const char *spec)
+{
+    size_t dir_len = strlen(dir);
+    size_t spec_len = strlen(spec);
+    bool slash = dir_len != 0u && dir[dir_len - 1u] == '/';
+    char *buf = malloc(dir_len + (slash ? 0u : 1u) + spec_len + 1u);
+    if (!buf) return NULL;
+    memcpy(buf, dir, dir_len);
+    if (!slash) buf[dir_len++] = '/';
+    memcpy(buf + dir_len, spec, spec_len + 1u);
+    return buf;
+}
+
 static const char *resolve_include(Parser *p, const SourceFrame *frame,
                                    const char *spec)
 {
-    if (!frame || !frame->path || *spec == '/') return own_path(p, spec);
-    const char *slash = strrchr(frame->path, '/');
-    if (!slash) return own_path(p, spec);
-    size_t dir_len = (size_t)(slash - frame->path) + 1u;
-    size_t spec_len = strlen(spec);
-    char *buf = malloc(dir_len + spec_len + 1u);
-    if (!buf) return NULL;
-    memcpy(buf, frame->path, dir_len);
-    memcpy(buf + dir_len, spec, spec_len + 1u);
-    const char *path = own_path(p, buf);
-    free(buf);
-    return path;
+    if (*spec == '/') return own_path(p, spec);
+
+    /* 1. relative to the including file (existing behaviour), 2. explicit -I
+     * directories, 3. the built-in stdlib. Keep the first candidate as the
+     * fallback so a missing file reports a useful path. */
+    char *fallback = NULL;
+    if (frame && frame->path) {
+        const char *slash = strrchr(frame->path, '/');
+        size_t dir_len = slash ? (size_t)(slash - frame->path) + 1u : 0u;
+        size_t spec_len = strlen(spec);
+        char *buf = malloc(dir_len + spec_len + 1u);
+        if (!buf) return NULL;
+        memcpy(buf, frame->path, dir_len);
+        memcpy(buf + dir_len, spec, spec_len + 1u);
+        if (path_exists(buf)) {
+            const char *path = own_path(p, buf);
+            free(buf);
+            return path;
+        }
+        fallback = buf;
+    }
+
+    for (size_t i = 0u; i < p->include_dir_count; i++) {
+        char *buf = join_path(p->include_dirs[i], spec);
+        if (!buf) { free(fallback); return NULL; }
+        if (path_exists(buf)) {
+            const char *path = own_path(p, buf);
+            free(buf);
+            free(fallback);
+            return path;
+        }
+        free(buf);
+    }
+
+#ifdef ASM_STDLIB_DIR
+    {
+        char *buf = join_path(ASM_STDLIB_DIR, spec);
+        if (!buf) { free(fallback); return NULL; }
+        if (path_exists(buf)) {
+            const char *path = own_path(p, buf);
+            free(buf);
+            free(fallback);
+            return path;
+        }
+        free(buf);
+    }
+#endif
+
+    if (fallback) {
+        const char *path = own_path(p, fallback);
+        free(fallback);
+        return path;
+    }
+    return own_path(p, spec);
 }
 
 static bool path_in_stack(const Parser *p, const char *path)
@@ -935,15 +998,6 @@ static Item *add_item(Parser *p, size_t line)
     item->line = line;
     item->path = p->err_path;
     return item;
-}
-
-static int add_inst(Parser *p, size_t line, VmOpcode op, int64_t arg)
-{
-    Item *item = add_item(p, line);
-    if (!item) return -1;
-    item->op = op;
-    item->arg = arg;
-    return 0;
 }
 
 /* ------------------------------------------------------- macro expansion */
@@ -1305,8 +1359,8 @@ static int parse_line(Parser *p, char *line, SourceFrame *frame)
     if (token_eq_ci(s, mn_len, "MACRO")) {
         const char *name = rest;
         size_t name_len = token_len(name);
-        if (!valid_label(name, name_len))
-            return fail(p, err_line, "MACRO requires a name and parameters");
+        if (name_len == 0u || !valid_label(name, name_len))
+            return fail(p, err_line, "MACRO requires a name");
         char **params = NULL;
         size_t param_count = 0u;
         if (split_params(skip_ws(rest + name_len), &params, &param_count) != 0) {
@@ -1411,63 +1465,8 @@ static int parse_line(Parser *p, char *line, SourceFrame *frame)
     }
 
     const OpDef *def = find_op(s, mn_len);
-    if (!def) {
-        /* Fixed pseudo-ops expand into real instructions and device ports. */
-        bool pseudo = token_eq_ci(s, mn_len, "INC") ||
-                      token_eq_ci(s, mn_len, "DEC") ||
-                      token_eq_ci(s, mn_len, "NEG") ||
-                      token_eq_ci(s, mn_len, "PRINT_CHAR") ||
-                      token_eq_ci(s, mn_len, "PRINT") ||
-                      token_eq_ci(s, mn_len, "FPRINT") ||
-                      token_eq_ci(s, mn_len, "READ_INT") ||
-                      token_eq_ci(s, mn_len, "PRINT_STR") ||
-                      token_eq_ci(s, mn_len, "READ_STR");
-        if (!pseudo)
-            return fail(p, err_line, "unknown instruction '%.*s'", (int)mn_len, s);
-        if (rest_len != 0u)
-            return fail(p, err_line, "%.*s takes no operand", (int)mn_len, s);
-
-        if (token_eq_ci(s, mn_len, "INC")) {
-            if (add_inst(p, item_line, OP_PUSH, 1) != 0 ||
-                add_inst(p, item_line, OP_ADD, 0) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "DEC")) {
-            if (add_inst(p, item_line, OP_PUSH, 1) != 0 ||
-                add_inst(p, item_line, OP_SUB, 0) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "NEG")) {
-            if (add_inst(p, item_line, OP_PUSH, 0) != 0 ||
-                add_inst(p, item_line, OP_SWAP, 0) != 0 ||
-                add_inst(p, item_line, OP_SUB, 0) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "PRINT_CHAR")) {
-            if (add_inst(p, item_line, OP_DEO, VM_CONSOLE_PUTC) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "PRINT")) {
-            if (add_inst(p, item_line, OP_DEO, VM_CONSOLE_PUTI) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "FPRINT")) {
-            if (add_inst(p, item_line, OP_DEO, VM_CONSOLE_PUTF) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "READ_INT")) {
-            if (add_inst(p, item_line, OP_DEI, VM_CONSOLE_GETI) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "PRINT_STR")) {
-            if (add_inst(p, item_line, OP_DEO, VM_CONSOLE_PUTS_LEN) != 0 ||
-                add_inst(p, item_line, OP_DEO, VM_CONSOLE_PUTS_ADDR) != 0 ||
-                add_inst(p, item_line, OP_PUSH, 0) != 0 ||
-                add_inst(p, item_line, OP_DEO, VM_CONSOLE_PUTS) != 0)
-                return fail(p, err_line, "out of memory");
-        } else if (token_eq_ci(s, mn_len, "READ_STR")) {
-            if (add_inst(p, item_line, OP_DEO, VM_CONSOLE_GETS_MAX) != 0 ||
-                add_inst(p, item_line, OP_DEO, VM_CONSOLE_GETS_ADDR) != 0 ||
-                add_inst(p, item_line, OP_PUSH, 0) != 0 ||
-                add_inst(p, item_line, OP_DEO, VM_CONSOLE_GETS) != 0 ||
-                add_inst(p, item_line, OP_DEI, VM_CONSOLE_GETS_LEN) != 0)
-                return fail(p, err_line, "out of memory");
-        }
-        return 0;
-    }
+    if (!def)
+        return fail(p, err_line, "unknown instruction '%.*s'", (int)mn_len, s);
 
     if (def->operand == OPR_NONE) {
         if (rest_len != 0u)
@@ -1543,7 +1542,8 @@ static void free_parser(Parser *p)
     free(p->owned_paths);
 }
 
-static int parse_text(AsmProgram *prog, const char *source, const char *path)
+static int parse_text(AsmProgram *prog, const char *source, const char *path,
+                      const char *const *include_dirs, size_t include_dir_count)
 {
     if (!prog || !source) return -1;
     asm_program_init(prog);
@@ -1551,6 +1551,8 @@ static int parse_text(AsmProgram *prog, const char *source, const char *path)
     Parser p;
     memset(&p, 0, sizeof p);
     p.out = prog;
+    p.include_dirs = include_dirs;
+    p.include_dir_count = include_dir_count;
     p.emit = true;
 
     p.src = own_text(&p, source, strlen(source));
@@ -1691,10 +1693,11 @@ error:
 
 int asm_parse_string(AsmProgram *prog, const char *source)
 {
-    return parse_text(prog, source, NULL);
+    return parse_text(prog, source, NULL, NULL, 0u);
 }
 
-int asm_parse_file(AsmProgram *prog, const char *path)
+int asm_parse_file_ex(AsmProgram *prog, const char *path,
+                      const char *const *include_dirs, size_t include_dir_count)
 {
     if (!prog || !path) return -1;
     asm_program_init(prog);
@@ -1728,9 +1731,14 @@ int asm_parse_file(AsmProgram *prog, const char *path)
     fclose(file);
     buf[got] = '\0';
 
-    int rc = parse_text(prog, buf, path);
+    int rc = parse_text(prog, buf, path, include_dirs, include_dir_count);
     free(buf);
     return rc;
+}
+
+int asm_parse_file(AsmProgram *prog, const char *path)
+{
+    return asm_parse_file_ex(prog, path, NULL, 0u);
 }
 
 /* --------------------------------------------------------------- ROM output */

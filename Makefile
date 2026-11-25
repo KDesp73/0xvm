@@ -11,6 +11,8 @@ BUILD_DIR   = build
 TEST_DIR    = tests
 APPS_DIR    = apps
 DEPS_DIR    = deps
+STDLIB_DIR  = stdlib
+STDLIB_SRC  = $(wildcard $(STDLIB_DIR)/*.asm)
 
 TARGET  = vm
 VERSION = 0.1.0
@@ -42,6 +44,7 @@ endif
 LIBS = $(LIB_STATIC) $(LIB_SHARED)
 
 CFLAGS += -I$(INCLUDE_DIR) -I$(APPS_DIR) -I$(APPS_DIR)/common -I$(DEPS_DIR) -I$(TEST_DIR)
+CFLAGS += '-DASM_STDLIB_DIR="$(CURDIR)/$(STDLIB_DIR)"'
 CFLAGS += -MMD -MP -fPIC
 LDFLAGS +=
 
@@ -109,7 +112,7 @@ $(TEST_BIN): $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 -include $(DEP) $(TEST_DEP) $(TEST_MAIN:.o=.d) $(COMMON_OBJ:.o=.d) \
 	$(patsubst %,$(BUILD_DIR)/app_0x%.d,$(TOOL_NAMES))
 
-$(CONFORMANCE_ROM): $(TEST_DIR)/conformance.asm $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+$(CONFORMANCE_ROM): $(TEST_DIR)/conformance.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
 	@echo "[INFO] Building conformance ROM"
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
 

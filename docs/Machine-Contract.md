@@ -138,10 +138,12 @@ from the stack.
   return `VM_OK`, `VM_HALTED`, or `VM_ERR_IO`.
 
 `PRINT`, `FPRINT`, `PRINT_STR`, `PRINT_CHAR`, `READ_INT`, and `READ_STR` are
-**assembler pseudo-ops**, not opcodes. They expand to device port accesses in
-the payload. The same applies to source-level `INCLUDE`, `IF`/`IFDEF`/`IFNDEF`,
-and `MACRO` directives: they are processed by the assembler and emit no
-instruction, opcode, device port, or ROM header change.
+not opcodes. They are optional macros in `stdlib/console.asm` that expand to
+device port accesses in the payload, and a program opting in must INCLUDE that
+file. The same is true of `INC`/`DEC`/`NEG` and `GET`/`SET` in `stdlib/`. The
+source-level `INCLUDE`, `IF`/`IFDEF`/`IFNDEF`, and `MACRO` directives are
+processed by the assembler and emit no instruction, opcode, device port, or ROM
+header change.
 
 ## 7. Reset and halt
 
@@ -250,7 +252,7 @@ The current codebase conforms to this contract:
    address. Static data stays in the image region; the image is not copied into
    the heap.
 5. Core I/O opcodes are gone. `DEI`/`DEO` are the only I/O instructions, and
-   `PRINT*`/`READ*` are assembler pseudo-ops that expand to Console ports.
+   `PRINT*`/`READ*` are optional stdlib macros that expand to Console ports.
 6. `0xvm` accepts assembly source or a ROM, `0xasm` writes a ROM, `0xdis`
    decodes source or a ROM (labelling reserved bytes and reporting truncated
    immediates), `0xrom` validates and prints ROM headers, and `0xvm` installs

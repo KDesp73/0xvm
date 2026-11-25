@@ -14,6 +14,8 @@
 ;   1
 ;   )
 
+INCLUDE "console.asm"
+
 EQU DEMO_LEVEL 2
 INCLUDE "lib/macros.asm"
 

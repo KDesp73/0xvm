@@ -10,7 +10,8 @@
 #define CLI_IMPLEMENTATION
 #include "io/cli.h"
 
-static int assemble(const char *path, const char *output)
+static int assemble(const char *path, const char *output,
+                    const char *const *include_dirs, size_t include_dir_count)
 {
     uint8_t *source = NULL;
     size_t len = 0u;
@@ -23,7 +24,8 @@ static int assemble(const char *path, const char *output)
     free(source);
 
     AsmProgram program;
-    if (!tools_assemble_file(path, &program)) return EXIT_FAILURE;
+    if (!tools_assemble_file_ex(path, &program, include_dirs, include_dir_count))
+        return EXIT_FAILURE;
 
     char *out = output ? (char *)output : tools_default_output(path);
     if (!out) {
@@ -48,17 +50,21 @@ int main(int argc, char **argv)
         cli_arg_new('v', "version", "Print the program version", no_argument),
         cli_arg_new('f', "file", "Assembly source file", required_argument),
         cli_arg_new('o', "output", "ROM output path (default: replace .asm with .rom)", required_argument),
+        cli_arg_new('I', "include-dir", "Add a directory to the INCLUDE search path", required_argument),
         NULL
     );
 
     const char *path = NULL;
     const char *output = NULL;
+    const char **include_dirs = NULL;
+    size_t include_dir_count = 0u;
     int opt;
     LOOP_ARGS(opt, args) {
         switch (opt) {
             case 'h':
-                cli_help(args, NULL, "0xasm -f FILE [-o ROM]",
-                         "Assemble source into a VMIM ROM.");
+                cli_help(args, NULL, "0xasm -f FILE [-o ROM] [-I DIR]...",
+                         "Assemble source into a VMIM ROM. INCLUDE searches the "
+                         "including file's directory, -I directories, then the stdlib.");
                 cli_args_free(&args);
                 return EXIT_SUCCESS;
             case 'v':
@@ -67,6 +73,19 @@ int main(int argc, char **argv)
                 return EXIT_SUCCESS;
             case 'f': path = optarg; break;
             case 'o': output = optarg; break;
+            case 'I': {
+                const char **tmp = realloc(include_dirs,
+                    (include_dir_count + 1u) * sizeof *tmp);
+                if (!tmp) {
+                    ERRO("Out of memory");
+                    free(include_dirs);
+                    cli_args_free(&args);
+                    return EXIT_FAILURE;
+                }
+                include_dirs = tmp;
+                include_dirs[include_dir_count++] = optarg;
+                break;
+            }
             default: break;
         }
     }
@@ -74,7 +93,10 @@ int main(int argc, char **argv)
 
     if (!path) {
         ERRO("Provide a source file with -f/--file");
+        free(include_dirs);
         return EXIT_FAILURE;
     }
-    return assemble(path, output);
+    int rc = assemble(path, output, include_dirs, include_dir_count);
+    free(include_dirs);
+    return rc;
 }

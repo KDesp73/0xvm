@@ -17,6 +17,8 @@
 ;
 ; =============================================================================
 
+INCLUDE "all.asm"
+
 ; -----------------------------------------------------------------------------
 ; Data section -- stored in the image region. Data labels are absolute byte
 ; addresses. PRINT_STR appends its own newline, so labels contain no newline.

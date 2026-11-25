@@ -35,6 +35,12 @@ void asm_program_free(AsmProgram *prog);
 int asm_parse_string(AsmProgram *prog, const char *source);
 int asm_parse_file(AsmProgram *prog, const char *path);
 
+/* Like asm_parse_file, with extra directories searched by INCLUDE after the
+ * including file's own directory. The built-in stdlib directory is always
+ * searched as well. The caller owns `include_dirs` for the duration of the call. */
+int asm_parse_file_ex(AsmProgram *prog, const char *path,
+                      const char *const *include_dirs, size_t include_dir_count);
+
 /* Source line of the byte at absolute RAM address `addr` (0 when unknown). */
 size_t asm_line_of(const AsmProgram *prog, uint16_t addr);
 

@@ -3,6 +3,8 @@
 ; System/Console transcript and ends with a device halt. Hosts must provide the
 ; full System and Console port set documented in docs/Machine-Contract.md.
 
+INCLUDE "all.asm"
+
         NOP
 
 ; PUSH / DUP / POP
