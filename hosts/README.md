@@ -20,6 +20,7 @@ make wasm                    # build only the browser host
 
 ./build/0xvm -f examples/gcd.asm
 ./build/0xvm-sdl -f examples/snake.asm
+./build/0xvm-sdl -f examples/typography.asm
 
 make wasm
 python3 -m http.server 8000 --directory build
@@ -27,5 +28,8 @@ python3 -m http.server 8000 --directory build
 ```
 
 The browser page loads `snake.rom` by default and accepts `?rom=URL` or a local
-ROM file. Its Console is a text panel; Screen and Controller map to a canvas and
-keyboard events.
+ROM file. `make wasm` also writes `build/typography.rom`, so
+`0xvm-wasm.html?rom=typography.rom` runs the graphical typography example. Its
+Console is a text panel; Screen and Controller map to a canvas and keyboard
+events. Both graphical hosts present a frame only on `VM_SCREEN_DRAW`; `CLEAR`
+and `PIXEL` update an offscreen framebuffer.

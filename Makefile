@@ -64,6 +64,9 @@ CONFORMANCE_ROM = $(BUILD_DIR)/conformance-v2.rom
 SNAKE_ROM = $(BUILD_DIR)/snake.rom
 SNAKE_SMOKE_SRC = $(BUILD_DIR)/snake-smoke.asm
 SNAKE_SMOKE_ROM = $(BUILD_DIR)/snake-smoke.rom
+TYPOGRAPHY_ROM = $(BUILD_DIR)/typography.rom
+TYPOGRAPHY_SMOKE_SRC = $(BUILD_DIR)/typography-smoke.asm
+TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
@@ -92,7 +95,7 @@ endif
 TOTAL_FILES := $(words $(SRC))
 
 .PHONY: all
-all: libs $(TOOLS) $(SDL_HOST) $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(TEST_BIN) $(CONFORMANCE_ROM) $(SNAKE_ROM) ## Build libraries, tools, hosts, tests, and ROMs
+all: libs $(TOOLS) $(SDL_HOST) $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(TEST_BIN) $(CONFORMANCE_ROM) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) ## Build libraries, tools, hosts, tests, and ROMs
 
 .PHONY: libs
 libs: $(LIBS) ## Build static and shared lib0xvm
@@ -221,6 +224,31 @@ snake-check: $(SNAKE_ROM) $(SNAKE_SMOKE_ROM) $(SDL_HOST) ## Assemble and smoke-r
 		exit 0
 endif
 
+$(TYPOGRAPHY_ROM): examples/typography.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+	@echo "[INFO] Building typography ROM"
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+$(TYPOGRAPHY_SMOKE_SRC): examples/typography.asm | $(BUILD_DIR)
+	@sed -e 's/^EQU FRAME_MS     66/EQU FRAME_MS     1/' \
+	     -e 's/^EQU MAX_FRAMES   0/EQU MAX_FRAMES   3/' $< > $@
+
+$(TYPOGRAPHY_SMOKE_ROM): $(TYPOGRAPHY_SMOKE_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+.PHONY: typography-check
+ifeq ($(SDL_HOST),)
+typography-check: $(TYPOGRAPHY_ROM) ## Assemble the typography example
+	@echo "[RUN] Typography assembly check (SDL3 not found)"
+else
+typography-check: $(TYPOGRAPHY_ROM) $(TYPOGRAPHY_SMOKE_ROM) $(SDL_HOST) ## Assemble and smoke-run the typography example
+	@echo "[RUN] Typography SDL smoke check (dummy video)"
+	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(TYPOGRAPHY_SMOKE_ROM) -W 320 -H 240 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'TYPOGRAPHY OK' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+endif
+
 .PHONY: conformance-check
 conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM through the CLI host
 	@echo "[RUN] CLI conformance check"
@@ -242,6 +270,7 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@$(MAKE) --no-print-directory conformance-check
 	@$(MAKE) --no-print-directory debugger-check
 	@$(MAKE) --no-print-directory snake-check
+	@$(MAKE) --no-print-directory typography-check
 	@$(MAKE) --no-print-directory sdl-check
 ifeq ($(EMCC_FOUND),yes)
 	@$(MAKE) --no-print-directory wasm-check
@@ -249,7 +278,7 @@ endif
 
 .PHONY: wasm
 ifeq ($(EMCC_FOUND),yes)
-wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) ## Build the browser/WASM host and Snake ROM
+wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) ## Build the browser/WASM host and example ROMs
 else
 wasm:
 	@echo "[WARN] emcc not found; skipping browser/WASM host"

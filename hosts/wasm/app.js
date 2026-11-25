@@ -27,7 +27,27 @@
   const consoleInput = document.getElementById('console-input');
 
   let startMs = performance.now();
-  let currentColor = '#000000';
+  let currentR = 0;
+  let currentG = 0;
+  let currentB = 0;
+  let frame = null;
+  let frameBytes = null;
+
+  /* The host keeps an offscreen framebuffer so a partially drawn VM frame is
+   * never presented. This mirrors the SDL3 host: CLEAR and PIXEL only write to
+   * the buffer, and DRAW presents the finished frame. */
+  function present() {
+    if (frame) ctx.putImageData(frame, 0, 0);
+  }
+
+  function fillFrame() {
+    for (let i = 0; i < frameBytes.length; i += 4) {
+      frameBytes[i] = currentR;
+      frameBytes[i + 1] = currentG;
+      frameBytes[i + 2] = currentB;
+      frameBytes[i + 3] = 255;
+    }
+  }
 
   /* The Emscripten library calls into this object. */
   globalThis.__0xvmHost = {
@@ -36,8 +56,11 @@
         canvas.width = width;
         canvas.height = height;
         ctx.imageSmoothingEnabled = false;
+        frame = ctx.createImageData(width, height);
+        frameBytes = frame.data;
         this.reset();
         this.clear();
+        present();
       },
       reset() {
         startMs = performance.now();
@@ -46,18 +69,23 @@
         return performance.now() - startMs;
       },
       color(r, g, b) {
-        currentColor = `rgb(${r}, ${g}, ${b})`;
-        ctx.fillStyle = currentColor;
+        currentR = r;
+        currentG = g;
+        currentB = b;
       },
       pixel(x, y) {
-        ctx.fillRect(x, y, 1, 1);
+        if (!frame || x < 0 || y < 0 || x >= frame.width || y >= frame.height) return;
+        const i = (y * frame.width + x) * 4;
+        frameBytes[i] = currentR;
+        frameBytes[i + 1] = currentG;
+        frameBytes[i + 2] = currentB;
+        frameBytes[i + 3] = 255;
       },
       draw() {
-        /* Pixels are presented immediately on the canvas. */
+        present();
       },
       clear() {
-        ctx.fillStyle = currentColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        fillFrame();
       }
     },
     console: {

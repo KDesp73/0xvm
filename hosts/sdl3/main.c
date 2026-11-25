@@ -186,7 +186,7 @@ static VmStatus sdl_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
         case VM_SCREEN_CLEAR: {
             size_t count = (size_t)d->width * (size_t)d->height;
             for (size_t i = 0u; i < count; i++) d->pixels[i] = d->color;
-            return sdl_present(d) ? VM_OK : VM_ERR_IO;
+            return VM_OK;
         }
         default:
             return VM_ERR_IO;
