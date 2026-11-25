@@ -38,23 +38,24 @@ typedef struct {
 } SdlDevice;
 
 /* Portable VM key codes: 1..4 = arrows, 5 = space, 6 = enter, 7 = escape,
- * 32..126 = printable ASCII. Anything else reports 0 (no key). */
-static int64_t map_key(SDL_Keycode key)
+ * 8 = backspace, 9 = delete, 32..126 = printable ASCII. Anything else reports 0.
+ * Printable text comes from SDL_EVENT_TEXT_INPUT so shift/layout work; control
+ * keys come from SDL_EVENT_KEY_DOWN. */
+static int64_t map_control_key(SDL_Keycode key)
 {
     switch (key) {
-        case SDLK_UP:    return 1;
-        case SDLK_DOWN:  return 2;
-        case SDLK_LEFT:  return 3;
-        case SDLK_RIGHT: return 4;
-        case SDLK_SPACE: return 5;
+        case SDLK_UP:        return 1;
+        case SDLK_DOWN:      return 2;
+        case SDLK_LEFT:      return 3;
+        case SDLK_RIGHT:     return 4;
         case SDLK_RETURN:
         case SDLK_RETURN2:
-        case SDLK_KP_ENTER: return 6;
-        case SDLK_ESCAPE: return 7;
-        default: break;
+        case SDLK_KP_ENTER:  return 6;
+        case SDLK_ESCAPE:    return 7;
+        case SDLK_BACKSPACE: return 8;
+        case SDLK_DELETE:    return 9;
+        default: return 0;
     }
-    if (key >= 32u && key <= 126u) return (int64_t)key;
-    return 0;
 }
 
 static inline uint64_t mono_ns(void)
@@ -72,10 +73,15 @@ static void sdl_poll(SdlDevice *d)
         if (event.type == SDL_EVENT_QUIT) {
             d->quit = true;
         } else if (event.type == SDL_EVENT_KEY_DOWN) {
-            int64_t code = map_key(event.key.key);
-            /* Arrow keys repeat so a held direction paints a continuous line;
-             * action keys (space/enter/escape) only fire on the first press. */
-            if (code != 0 && (!event.key.repeat || code <= 4)) d->key = code;
+            int64_t code = map_control_key(event.key.key);
+            if (code != 0 && (!event.key.repeat || code <= 4 || code == 8 || code == 9))
+                d->key = code;
+        } else if (event.type == SDL_EVENT_TEXT_INPUT) {
+            const char *text = event.text.text;
+            if (text && text[0] != '\0' && (unsigned char)text[1] == 0) {
+                unsigned char ch = (unsigned char)text[0];
+                if (ch >= 32u && ch <= 126u) d->key = (int64_t)ch;
+            }
         }
     }
     d->poll_ns += mono_ns() - t0;
@@ -131,6 +137,7 @@ static bool sdl_device_init(SdlDevice *d, int width, int height)
     }
     d->color = SDL_MapRGBA(d->format, NULL, 255, 255, 255, 255);
     d->start_ms = SDL_GetTicks();
+    SDL_StartTextInput(d->window);
     if (!sdl_present(d)) {
         ERRO("Initial frame failed: %s", SDL_GetError());
         goto fail;
@@ -144,6 +151,7 @@ fail:
 
 static void sdl_device_free(SdlDevice *d)
 {
+    if (d->window) SDL_StopTextInput(d->window);
     if (d->texture) SDL_DestroyTexture(d->texture);
     if (d->renderer) SDL_DestroyRenderer(d->renderer);
     if (d->window) SDL_DestroyWindow(d->window);

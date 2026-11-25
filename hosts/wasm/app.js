@@ -109,6 +109,8 @@
       case ' ': return 5;
       case 'Enter': return 6;
       case 'Escape': return 7;
+      case 'Backspace': return 8;
+      case 'Delete': return 9;
       default: break;
     }
     if (event.key.length === 1) {

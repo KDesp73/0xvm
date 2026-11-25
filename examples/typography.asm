@@ -29,14 +29,16 @@ EQU TEXT_CAP     1024
 EQU FONT_FIRST   32
 EQU FONT_LAST    126
 
-EQU KEY_UP       1
-EQU KEY_DOWN     2
-EQU KEY_LEFT     3
-EQU KEY_RIGHT    4
-EQU KEY_SPACE    5
-EQU KEY_ENTER    6
-EQU KEY_ESC      7
-EQU NEWLINE      10
+EQU KEY_UP        1
+EQU KEY_DOWN      2
+EQU KEY_LEFT      3
+EQU KEY_RIGHT     4
+EQU KEY_SPACE     5
+EQU KEY_ENTER     6
+EQU KEY_ESC       7
+EQU KEY_BACKSPACE 8
+EQU KEY_DELETE    9
+EQU NEWLINE       10
 
 EQU C_BG         0x101018
 EQU C_PANEL      0x181828
@@ -64,7 +66,7 @@ EQU G_SLEEP      48           ; idle sleep ms
 ; ------------------------------------------------------------------ data
 
 intro:
-    STR "TYPE | arrows move | type inserts | enter newline | esc quits"
+    STR "TYPE | arrows move | type inserts | enter newline | bksp/del remove | esc quits"
     DB 0
 
 title_text:
@@ -660,6 +662,60 @@ ib_shift_done:
     PUSH 1
     RET
 
+; [..., index] -> [..., 1 on delete, 0 when out of range]
+delete_at:
+    ENTER 2                 ; 0=index 1=i
+    PUSH 2
+    PICK
+    LOCAL_SET 0
+    LOCAL_GET 0
+    PUSH 0
+    CMP_LT
+    JMP_Z da_bad
+    LOCAL_GET 0
+    PUSH G_LEN
+    LOAD32
+    CMP_GE
+    JMP_Z da_bad
+    LOCAL_GET 0
+    LOCAL_SET 1
+da_shift_loop:
+    LOCAL_GET 1
+    PUSH G_LEN
+    LOAD32
+    PUSH 1
+    SUB
+    CMP_GE
+    JMP_Z da_shift_done
+da_shift_do:
+    PUSH G_TEXT
+    LOAD32
+    LOCAL_GET 1
+    PUSH 1
+    ADD
+    ADD
+    LOAD8
+    PUSH G_TEXT
+    LOAD32
+    LOCAL_GET 1
+    ADD
+    STORE8
+    LOCAL_GET 1
+    INC
+    LOCAL_SET 1
+    JMP da_shift_loop
+da_shift_done:
+    PUSH G_LEN
+    LOAD32
+    DEC
+    PUSH G_LEN
+    STORE32
+    PUSH 1
+    RET
+da_bad:
+    PUSH 0
+    RET
+
 ; ------------------------------------------------------------------ rendering
 
 ; [..., quit flag] -> [...]
@@ -1088,8 +1144,41 @@ not_right:
     PUSH NEWLINE
     CALL insert_byte
     POP
-    JMP key_done
+    JMP key_done_popless
 not_enter:
+    DUP
+    PUSH KEY_BACKSPACE
+    CMP_EQ
+    JMP_Z not_backspace
+    POP
+    PUSH G_CARET
+    LOAD32
+    DEC
+    DUP
+    PUSH 0
+    CMP_LT
+    JMP_Z bs_bad
+    DUP
+    CALL delete_at
+    POP
+    PUSH G_CARET
+    STORE32
+    JMP key_done_popless
+bs_bad:
+    POP
+    JMP key_done_popless
+not_backspace:
+    DUP
+    PUSH KEY_DELETE
+    CMP_EQ
+    JMP_Z not_delete
+    POP
+    PUSH G_CARET
+    LOAD32
+    CALL delete_at
+    POP
+    JMP key_done_popless
+not_delete:
     DUP
     PUSH KEY_SPACE
     CMP_EQ
@@ -1098,7 +1187,7 @@ not_enter:
     PUSH FONT_FIRST
     CALL insert_byte
     POP
-    JMP key_done
+    JMP key_done_popless
 not_space:
     DUP
     PUSH FONT_FIRST
@@ -1110,9 +1199,10 @@ not_space:
     JMP_Z key_drop
     CALL insert_byte
     POP
-    JMP key_done
+    JMP key_done_popless
 key_done:
     POP
+key_done_popless:
     JMP after_key
 key_drop:
     POP
