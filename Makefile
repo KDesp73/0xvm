@@ -27,9 +27,15 @@ TEST_DEP = $(TEST_OBJ:.o=.d)
 TEST_MAIN = $(BUILD_DIR)/app_0xtest.o
 TEST_BIN  = $(BUILD_DIR)/0xtest
 
-TOOL_NAMES = vm asm dis rom db
+SINGLE_TOOL_NAMES = vm asm dis rom
+TOOL_NAMES = $(SINGLE_TOOL_NAMES) db
 TOOLS      = $(foreach tool,$(TOOL_NAMES),$(BUILD_DIR)/0x$(tool))
 COMMON_OBJ = $(BUILD_DIR)/tools_common.o $(BUILD_DIR)/host.o
+
+DB_DIR  = $(APPS_DIR)/db
+DB_SRC  = $(wildcard $(DB_DIR)/*.c)
+DB_OBJ  = $(patsubst $(DB_DIR)/%.c,$(BUILD_DIR)/app_db_%.o,$(DB_SRC))
+DB_DEP  = $(DB_OBJ:.o=.d)
 
 SDL3_FOUND := $(shell pkg-config --exists sdl3 2>/dev/null && echo yes)
 ifeq ($(SDL3_FOUND),yes)
@@ -116,12 +122,20 @@ $(LIB_SHARED): $(OBJ) | $(BUILD_DIR)
 	@echo "[INFO] Building lib0xvm (shared)"
 	$(CC) $(SHARED_FLAG) -o $@ $(OBJ) $(LDFLAGS)
 
-.PRECIOUS: $(OBJ) $(TEST_OBJ) $(COMMON_OBJ)
+.PRECIOUS: $(OBJ) $(TEST_OBJ) $(COMMON_OBJ) $(DB_OBJ)
 
-$(TOOLS): $(BUILD_DIR)/0x%: $(APPS_DIR)/%/main.c $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
+$(foreach tool,$(SINGLE_TOOL_NAMES),$(BUILD_DIR)/0x$(tool)): $(BUILD_DIR)/0x%: $(APPS_DIR)/%/main.c $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 	@echo "[INFO] Building tool '0x$*'"
 	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/app_0x$*.o
 	$(CC) $(BUILD_DIR)/app_0x$*.o $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/app_db_%.o: $(DB_DIR)/%.c $(DB_DIR)/db.h | $(BUILD_DIR)
+	@echo "[INFO] Compiling $<"
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/0xdb: $(DB_OBJ) $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
+	@echo "[INFO] Building tool '0xdb'"
+	$(CC) $(DB_OBJ) $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
 
 $(TEST_MAIN): $(APPS_DIR)/test/main.c | $(BUILD_DIR)
 	@echo "[INFO] Compiling test runner"
@@ -132,7 +146,7 @@ $(TEST_BIN): $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR)
 	$(CC) $(TEST_MAIN) $(TEST_OBJ) $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
 
 -include $(DEP) $(TEST_DEP) $(TEST_MAIN:.o=.d) $(COMMON_OBJ:.o=.d) \
-	$(patsubst %,$(BUILD_DIR)/app_0x%.d,$(TOOL_NAMES)) \
+	$(patsubst %,$(BUILD_DIR)/app_0x%.d,$(SINGLE_TOOL_NAMES)) $(DB_DEP) \
 	$(if $(SDL_HOST),$(BUILD_DIR)/app_0xvm-sdl.d)
 
 $(CONFORMANCE_ROM): $(TEST_DIR)/conformance.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
