@@ -270,6 +270,9 @@ pf_loop:
     AND
     PUSH G_GW
     LOAD32
+    PUSH G_GH
+    LOAD32
+    MUL
     MOD
     LOCAL_SET 0
     LOCAL_GET 0
