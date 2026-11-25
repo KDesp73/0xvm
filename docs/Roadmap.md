@@ -2,8 +2,8 @@
 
 This roadmap tracks the work after the v2 VM core and assembler were complete.
 Each milestone is validated with `make test`, which builds the core C tests,
-runs the CLI conformance transcript, checks `0xdb`, and — when SDL3 is present —
-checks the SDL host too.
+runs the CLI conformance transcript, checks `0xdb`, and — when their optional
+toolchains are present — checks the SDL and WASM hosts too.
 
 ## Done
 
@@ -34,8 +34,8 @@ checks the SDL host too.
 
 ## Next
 
-The toolchain, software layer, and flagship SDL app are complete. The next
-milestone is a browser host.
+The toolchain, software layer, flagship SDL app, and browser host are complete.
+The next milestone is a Lua-subset compiler targeting the stdlib runtime.
 
 1. **Grow the software layer — [done].**
    - Turned `stdlib/` into a tested runtime, still entirely opt-in source macros.
@@ -57,12 +57,14 @@ milestone is a browser host.
    - Keep console text I/O on terminal stdin/stdout; the SDL host exposes only
      Screen, Controller, and timer devices.
 
-3. **Browser / WASM host — [next].**
-   - Add a browser host behind the same `VmDevice` callback split so programs
+3. **Browser / WASM host — [done].**
+   - Added a browser host behind the same `VmDevice` callback split so programs
      can be shared by URL.
-   - Keep the core, CLI tools, and test suite free of host GUI dependencies.
+   - The canvas page loads `snake.rom` by default and maps keyboard input to the
+     portable Controller codes; the Node smoke check runs Snake headlessly.
+   - Kept the core, CLI tools, and native test suite free of host GUI dependencies.
 
-4. **Lua-subset compiler — [after the runtime exists].**
+4. **Lua-subset compiler — [next].**
    - Compile numbers, strings, tables, `if`/`while`/`for`, and plain functions
      to `0xasm` text.
    - Target the `stdlib/` runtime routines instead of emitting raw heap and

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>0xvm — browser host</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #101217; color: #e8eaf0; }
+    main { max-width: 1040px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    .lede { margin: 0 0 20px; color: #a9afc0; }
+    .layout { display: grid; grid-template-columns: minmax(320px, 1fr) 320px; gap: 24px; }
+    .panel { background: #191c24; border: 1px solid #2b3040; border-radius: 10px; padding: 16px; }
+    canvas { display: block; width: 100%; height: auto; background: #000; image-rendering: pixelated; border-radius: 4px; }
+    .hint { color: #a9afc0; font-size: 0.9rem; margin: 12px 0 0; }
+    .controls { display: flex; gap: 8px; margin-bottom: 12px; }
+    button, input[type=file], input[type=text] { font: inherit; }
+    button { background: #3c6ef0; color: white; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    label { display: block; margin-bottom: 12px; color: #cdd2e0; font-size: 0.9rem; }
+    input[type=file] { width: 100%; margin-top: 4px; }
+    pre { height: 300px; overflow: auto; margin: 0 0 12px; padding: 10px; background: #0b0d12; border-radius: 6px; white-space: pre-wrap; }
+    form { display: flex; gap: 6px; }
+    input[type=text] { flex: 1; min-width: 0; background: #0b0d12; border: 1px solid #2b3040; border-radius: 6px; color: inherit; padding: 7px; }
+    #status { margin-top: 12px; color: #a9afc0; font-size: 0.9rem; }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>0xvm — browser host</h1>
+    <p class="lede">Runs VMIM v2 ROMs with canvas Screen, keyboard Controller, and timer devices.</p>
+    <div class="layout">
+      <section class="panel">
+        <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
+        <p class="hint">Arrow keys move · space/enter act · escape quits. Click the screen if keys do not respond.</p>
+      </section>
+      <aside class="panel">
+        <div class="controls">
+          <button id="run" disabled>Pause</button>
+          <button id="reset" disabled>Restart</button>
+        </div>
+        <label>ROM file
+          <input id="rom" type="file" accept=".rom,.bin">
+        </label>
+        <pre id="console" aria-label="Console output"></pre>
+        <form id="input-form">
+          <input id="console-input" type="text" placeholder="console input" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
+        <div id="status">Loading…</div>
+      </aside>
+    </div>
+  </main>
+  <script src="0xvm-wasm.js"></script>
+  <script src="0xvm-app.js"></script>
+</body>
+</html>

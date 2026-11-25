@@ -44,6 +44,17 @@ ifeq ($(SDL3_FOUND),yes)
     SDL_HOST    := $(BUILD_DIR)/0xvm-sdl
 endif
 
+EMCC       ?= emcc
+NODE       ?= node
+EMCC_FOUND := $(shell command -v $(EMCC) >/dev/null 2>&1 && echo yes)
+NODE_FOUND := $(shell command -v $(NODE) >/dev/null 2>&1 && echo yes)
+WASM_DIR   = $(APPS_DIR)/vm-wasm
+ifeq ($(EMCC_FOUND),yes)
+    WASM_JS    := $(BUILD_DIR)/0xvm-wasm.js
+    WASM_APP   := $(BUILD_DIR)/0xvm-app.js
+    WASM_HTML  := $(BUILD_DIR)/0xvm-wasm.html
+endif
+
 LIB_STATIC = $(BUILD_DIR)/lib0xvm.a
 LIB_SHARED = $(BUILD_DIR)/lib0xvm.so
 CONFORMANCE_ROM = $(BUILD_DIR)/conformance-v2.rom
@@ -78,7 +89,7 @@ endif
 TOTAL_FILES := $(words $(SRC))
 
 .PHONY: all
-all: libs $(TOOLS) $(SDL_HOST) $(TEST_BIN) $(CONFORMANCE_ROM) ## Build libraries, tools, hosts, tests, and conformance ROM
+all: libs $(TOOLS) $(SDL_HOST) $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(TEST_BIN) $(CONFORMANCE_ROM) $(SNAKE_ROM) ## Build libraries, tools, hosts, tests, and ROMs
 
 .PHONY: libs
 libs: $(LIBS) ## Build static and shared lib0xvm
@@ -115,6 +126,25 @@ $(SDL_HOST): $(APPS_DIR)/vm-sdl/main.c $(COMMON_OBJ) $(LIB_STATIC) | $(BUILD_DIR
 	@echo "[INFO] Building SDL3 host"
 	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/app_0xvm-sdl.o
 	$(CC) $(BUILD_DIR)/app_0xvm-sdl.o $(COMMON_OBJ) $(LIB_STATIC) -o $@ $(LDFLAGS)
+endif
+
+ifeq ($(EMCC_FOUND),yes)
+$(WASM_JS): $(SRC) $(WASM_DIR)/main.c $(WASM_DIR)/library.js $(INCLUDE_DIR)/vm.h | $(BUILD_DIR)
+	@echo "[INFO] Building browser/WASM host"
+	$(EMCC) $(SRC) $(WASM_DIR)/main.c --js-library $(WASM_DIR)/library.js \
+		-I$(INCLUDE_DIR) -O2 --no-entry \
+		-sMODULARIZE=1 -sEXPORT_NAME=create0xvm \
+		-sENVIRONMENT=web,worker,node -sALLOW_MEMORY_GROWTH=1 \
+		-sSTACK_SIZE=65536 \
+		-sEXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPU8"]' \
+		-sEXPORTED_FUNCTIONS='["_vmw_init","_vmw_load","_vmw_run","_vmw_step","_vmw_status","_vmw_ticks","_vmw_ip","_vmw_sp","_vmw_push_key","_vmw_request_quit","_vmw_console_input","_vmw_set_debug"]' \
+		-o $@
+
+$(WASM_APP): $(WASM_DIR)/app.js | $(BUILD_DIR)
+	@cp $< $@
+
+$(WASM_HTML): $(WASM_DIR)/index.html | $(BUILD_DIR)
+	@cp $< $@
 endif
 
 $(LIB_STATIC): $(OBJ) | $(BUILD_DIR)
@@ -205,6 +235,33 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@$(MAKE) --no-print-directory debugger-check
 	@$(MAKE) --no-print-directory snake-check
 	@$(MAKE) --no-print-directory sdl-check
+ifeq ($(EMCC_FOUND),yes)
+	@$(MAKE) --no-print-directory wasm-check
+endif
+
+.PHONY: wasm
+ifeq ($(EMCC_FOUND),yes)
+wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) ## Build the browser/WASM host and Snake ROM
+else
+wasm:
+	@echo "[WARN] emcc not found; skipping browser/WASM host"
+endif
+
+.PHONY: wasm-check
+ifeq ($(EMCC_FOUND),yes)
+ifeq ($(NODE_FOUND),yes)
+wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) ## Smoke-run Snake and conformance in the browser host under Node
+	@echo "[RUN] WASM Snake smoke check"
+	@$(NODE) tests/wasm-smoke.mjs $(WASM_JS) $(SNAKE_SMOKE_ROM) \
+		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED)
+else
+wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM)
+	@echo "[WARN] node not found; skipping WASM Snake smoke check"
+endif
+else
+wasm-check:
+	@echo "[WARN] emcc not found; skipping WASM Snake smoke check"
+endif
 
 .PHONY: sdl
 ifeq ($(SDL_HOST),)

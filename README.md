@@ -18,17 +18,34 @@ make conformance      # write build/conformance-v2.rom
 make conformance-check # run that ROM through 0xvm and diff the golden transcript
 make sdl              # build 0xvm-sdl (skipped when SDL3 is unavailable)
 make sdl-check        # run the conformance ROM through 0xvm-sdl with dummy video
+make wasm             # build the browser host (skipped when emcc is unavailable)
+make wasm-check       # smoke-run Snake through the browser host under Node
 ```
 
 `make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, six tools
 (`0xvm`, `0xasm`, `0xdis`, `0xrom`, `0xdb`, `0xtest`), and — when
-`pkg-config sdl3` succeeds — `build/0xvm-sdl`. The CLI tools accept `-f/--file`,
-`-v/--version`, and `-h/--help`; `0xtest` accepts `-v` and `-h`.
+`pkg-config sdl3` succeeds — `build/0xvm-sdl`. When `emcc` is available, it also
+produces `build/0xvm-wasm.js`, `build/0xvm-wasm.wasm`, and a ready-to-serve
+`build/0xvm-wasm.html`. The CLI tools accept `-f/--file`, `-v/--version`, and
+`-h/--help`; `0xtest` accepts `-v` and `-h`.
+
+To run Snake in a browser:
+
+```sh
+make wasm
+python3 -m http.server 8000 --directory build
+# open http://localhost:8000/0xvm-wasm.html
+```
+
+The page loads `snake.rom` by default, accepts `?rom=URL` to load a shared ROM,
+and the file picker loads any VMIM v2 ROM. Arrow keys, space, enter, and escape
+map to the portable Controller codes, and Console text appears beside the canvas.
 
 | Tool | Purpose |
 | --- | --- |
 | `0xvm` | CLI host: run a source file or ROM; `-t` traces, `-D` prefixes output with ticks |
 | `0xvm-sdl` | SDL3 host: Screen, Controller, and timer devices; `-W`/`-H` set the framebuffer size |
+| `0xvm-wasm` | browser host: canvas Screen, keyboard Controller, and timer devices |
 | `0xasm` | assemble source into a VMIM ROM; `-o` sets the output path, `-I` adds include paths |
 | `0xdis` | disassemble a source file or ROM |
 | `0xrom` | inspect and validate a ROM header |
