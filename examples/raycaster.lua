@@ -4,12 +4,12 @@
 -- a minimap shows the player's cell.
 --
 -- As in the typography demo, `const` data tables are the subset's writable
--- global storage.  ENABLE defaults to 0 so the plain CLI host can run the
--- golden; SDL3 and WASM builds flip it to 1.  REPORT exposes the state and map
--- labels for the scripted browser check.
+-- global storage.  ENABLE defaults to 1 so a direct SDL3 run renders; the CLI
+-- golden build flips it to 0.  REPORT exposes the state and map labels for the
+-- scripted browser check.
 
 -- ---------------------------------------------------------------- constants
-const ENABLE = 0
+const ENABLE = 1
 const REPORT = 0
 const POS_SHIFT = 8
 const POS_SCALE = 256

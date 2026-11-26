@@ -151,7 +151,7 @@ Build and run the Lua raycaster the same way:
 ```sh
 python3 -m luac compile examples/raycaster.lua -o build/lua-raycaster.asm -m build/lua-raycaster.lumap
 ./build/0xasm -f build/lua-raycaster.asm -o build/lua-raycaster.rom
-./build/0xvm -f build/lua-raycaster.rom  # CLI golden: RAYCASTER OK
+./build/0xvm-sdl -f build/lua-raycaster.rom -W 720 -H 480
 make lua-raycaster-check  # CLI golden run plus a bounded SDL smoke run
 ```
 

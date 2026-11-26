@@ -355,10 +355,9 @@ selects a colour from near-to-far palettes, and Y-side hits use a darker
 palette. A cell map, minimap, collision tests, and all mutable player state are
 `const` data tables, since top-level locals cannot be shared across functions.
 
-`ENABLE` defaults to `0` here, so a plain CLI run prints the intro and
-`RAYCASTER OK`. SDL3 and WASM builds flip it to `1`; the bounded smoke build
-also sets `FRAME_MS = 1` and `MAX_FRAMES = 3`. `make lua-raycaster-check` covers
-the CLI golden and a rendered SDL smoke run. `make wasm-check` builds a
-`REPORT = 1`, `FRAME_MS = 0` variant so scripted key presses are consumed
-without waiting on wall-clock pacing, then checks turn, move, strafe, and exit
-in the browser host.
+`ENABLE` defaults to `1` here, so a direct SDL3 run renders the maze; the CLI
+golden build flips it to `0`. The bounded smoke build also sets
+`FRAME_MS = 1` and `MAX_FRAMES = 3`. `make lua-raycaster-check` covers the CLI
+golden and a rendered SDL smoke run. `make wasm-check` builds a `REPORT = 1`,
+`FRAME_MS = 0` variant so scripted key presses are consumed without waiting on
+wall-clock pacing, then checks turn, move, strafe, and exit in the browser host.

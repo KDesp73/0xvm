@@ -652,15 +652,16 @@ class LuacTests(unittest.TestCase):
         self.assertIn('__lua_fn_cast_ray:', asm)
         self.assertIn('__lua_fn_draw_minimap:', asm)
         self.assertIn('__lua_str_1: STR "RAYCASTER OK"', asm)
-        self.assertIn('EQU ENABLE 0', asm)
-
-    def test_raycaster_example_has_an_interactive_branch(self):
-        source = Path(__file__).resolve().parents[1] / 'examples' / 'raycaster.lua'
-        text = source.read_text().replace('const ENABLE = 0',
-                                         'const ENABLE = 1', 1)
-        asm = compile_source(text, 'raycaster.lua')
         self.assertIn('EQU ENABLE 1', asm)
         self.assertIn('    SCREEN_SIZE\n', asm)
+
+    def test_raycaster_example_has_a_cli_safe_branch(self):
+        source = Path(__file__).resolve().parents[1] / 'examples' / 'raycaster.lua'
+        text = source.read_text().replace('const ENABLE = 1',
+                                         'const ENABLE = 0', 1)
+        asm = compile_source(text, 'raycaster.lua')
+        self.assertIn('EQU ENABLE 0', asm)
+        self.assertIn('__lua_str_1: STR "RAYCASTER OK"', asm)
 
 
 if __name__ == '__main__':

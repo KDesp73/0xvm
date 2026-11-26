@@ -97,9 +97,9 @@ LUA_TYPOGRAPHY_EXPECTED = $(TEST_DIR)/lua/typography.expected
 LUA_RAYCASTER_SRC = examples/raycaster.lua
 LUA_RAYCASTER_ASM = $(BUILD_DIR)/lua-raycaster.asm
 LUA_RAYCASTER_ROM = $(BUILD_DIR)/lua-raycaster.rom
-LUA_RAYCASTER_INTERACTIVE_SRC = $(BUILD_DIR)/lua-raycaster-interactive.lua
-LUA_RAYCASTER_INTERACTIVE_ASM = $(BUILD_DIR)/lua-raycaster-interactive.asm
-LUA_RAYCASTER_INTERACTIVE_ROM = $(BUILD_DIR)/lua-raycaster-interactive.rom
+LUA_RAYCASTER_CLI_SRC = $(BUILD_DIR)/lua-raycaster-cli.lua
+LUA_RAYCASTER_CLI_ASM = $(BUILD_DIR)/lua-raycaster-cli.asm
+LUA_RAYCASTER_CLI_ROM = $(BUILD_DIR)/lua-raycaster-cli.rom
 LUA_RAYCASTER_SMOKE_SRC = $(BUILD_DIR)/lua-raycaster-smoke.lua
 LUA_RAYCASTER_SMOKE_ASM = $(BUILD_DIR)/lua-raycaster-smoke.asm
 LUA_RAYCASTER_SMOKE_ROM = $(BUILD_DIR)/lua-raycaster-smoke.rom
@@ -344,16 +344,15 @@ $(LUA_RAYCASTER_ASM): $(LUA_RAYCASTER_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUIL
 	@echo "[INFO] Compiling Lua raycaster source"
 	@python3 -m luac compile $< -o $@ -m $(BUILD_DIR)/lua-raycaster.lumap
 
-$(LUA_RAYCASTER_INTERACTIVE_SRC): $(LUA_RAYCASTER_SRC) | $(BUILD_DIR)
-	@sed 's/^const ENABLE = 0$$/const ENABLE = 1/' $< > $@
+$(LUA_RAYCASTER_CLI_SRC): $(LUA_RAYCASTER_SRC) | $(BUILD_DIR)
+	@sed 's/^const ENABLE = 1$$/const ENABLE = 0/' $< > $@
 
-$(LUA_RAYCASTER_INTERACTIVE_ASM): $(LUA_RAYCASTER_INTERACTIVE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
-	@echo "[INFO] Compiling Lua raycaster interactive source"
+$(LUA_RAYCASTER_CLI_ASM): $(LUA_RAYCASTER_CLI_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua raycaster CLI source"
 	@python3 -m luac compile $< -o $@
 
 $(LUA_RAYCASTER_SMOKE_SRC): $(LUA_RAYCASTER_SRC) | $(BUILD_DIR)
-	@sed -e 's/^const ENABLE = 0$$/const ENABLE = 1/' \
-	     -e 's/^const FRAME_MS = 33$$/const FRAME_MS = 1/' \
+	@sed -e 's/^const FRAME_MS = 33$$/const FRAME_MS = 1/' \
 	     -e 's/^const MAX_FRAMES = 0$$/const MAX_FRAMES = 3/' $< > $@
 
 $(LUA_RAYCASTER_SMOKE_ASM): $(LUA_RAYCASTER_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
@@ -361,8 +360,7 @@ $(LUA_RAYCASTER_SMOKE_ASM): $(LUA_RAYCASTER_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJE
 	@python3 -m luac compile $< -o $@
 
 $(LUA_RAYCASTER_WASM_SRC): $(LUA_RAYCASTER_SRC) | $(BUILD_DIR)
-	@sed -e 's/^const ENABLE = 0$$/const ENABLE = 1/' \
-	     -e 's/^const REPORT = 0$$/const REPORT = 1/' \
+	@sed -e 's/^const REPORT = 0$$/const REPORT = 1/' \
 	     -e 's/^const FRAME_MS = 33$$/const FRAME_MS = 0/' $< > $@
 
 $(LUA_RAYCASTER_WASM_ASM): $(LUA_RAYCASTER_WASM_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
@@ -410,15 +408,15 @@ endif
 
 .PHONY: lua-raycaster-check
 ifeq ($(SDL_HOST),)
-lua-raycaster-check: $(LUA_RAYCASTER_ROM) \
+lua-raycaster-check: $(LUA_RAYCASTER_ROM) $(LUA_RAYCASTER_CLI_ROM) \
                      $(LUA_RAYCASTER_EXPECTED) $(BUILD_DIR)/0xvm
 else
-lua-raycaster-check: $(LUA_RAYCASTER_ROM) \
+lua-raycaster-check: $(LUA_RAYCASTER_ROM) $(LUA_RAYCASTER_CLI_ROM) \
                      $(LUA_RAYCASTER_SMOKE_ROM) $(LUA_RAYCASTER_EXPECTED) \
                      $(BUILD_DIR)/0xvm $(SDL_HOST)
 endif
 	@echo "[RUN] Lua raycaster CLI check"
-	@./$(BUILD_DIR)/0xvm -f $(LUA_RAYCASTER_ROM) 2>/dev/null \
+	@./$(BUILD_DIR)/0xvm -f $(LUA_RAYCASTER_CLI_ROM) 2>/dev/null \
 		| sed '/^\[INFO\] /d' > $(BUILD_DIR)/lua-raycaster-actual.txt
 	@diff -u $(LUA_RAYCASTER_EXPECTED) $(BUILD_DIR)/lua-raycaster-actual.txt
 ifeq ($(SDL_HOST),)
@@ -537,7 +535,7 @@ bench-compare: bench ## Compare current benchmarks with the committed baseline [
 .PHONY: wasm
 ifeq ($(EMCC_FOUND),yes)
 wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) \
-      $(LUA_TYPOGRAPHY_ROM) $(LUA_RAYCASTER_INTERACTIVE_ROM) ## Build the browser/WASM host and example ROMs
+      $(LUA_TYPOGRAPHY_ROM) $(LUA_RAYCASTER_ROM) ## Build the browser/WASM host and example ROMs
 else
 wasm:
 	@echo "[WARN] emcc not found; skipping browser/WASM host"
