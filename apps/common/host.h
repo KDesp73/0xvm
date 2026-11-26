@@ -42,10 +42,11 @@ typedef struct {
     FILE *input;       /* Console input; defaults to stdin */
     FILE *output;      /* Console output; defaults to stdout */
     bool debug;
+    uint8_t caps;      /* capability mask reported by VM_SYS_CAPS */
 } HostStdio;
 
 void host_stdio_init(HostStdio *stdio, bool debug);
-/* Adds the System range (0x00..0x02) and Console range (0x10..0x1B). */
+/* Adds the System range (0x00..0x03) and Console range (0x10..0x1B). */
 int host_stdio_add(VmHost *host, HostStdio *stdio);
 
 #endif /* APPS_COMMON_HOST_H */

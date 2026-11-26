@@ -26,6 +26,11 @@ struct VmState;
 #define VM_SYS_VERSION     0x00u     /* read: ROM format version */
 #define VM_SYS_DEBUG       0x01u     /* read/write: host tick-prefix flag */
 #define VM_SYS_HALT        0x02u     /* write: halt with VM_HALTED */
+#define VM_SYS_CAPS        0x03u     /* read: host capability bitmask */
+#define VM_CAPS_CONSOLE    0x01u     /* System/Console ports are available */
+#define VM_CAPS_SCREEN     0x02u     /* Screen ports are available */
+#define VM_CAPS_CONTROLLER 0x04u     /* Controller ports are available */
+#define VM_CAPS_TIMER      0x08u     /* Timer port is available */
 
 /* Device 1: Console. */
 #define VM_CONSOLE_PUTC    0x10u     /* write: low byte to stdout */

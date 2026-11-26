@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const [jsPath, romPath, conformanceRom, expectedPath, typographyRom, luaDeviceRom, luaTypographyRom, luaRaycasterRom] = process.argv.slice(2);
+const [jsPath, romPath, conformanceRom, expectedPath, typographyRom, luaDeviceRom, luaTypographyRom, luaRaycasterRom, bootRom] = process.argv.slice(2);
 if (!jsPath || !romPath) {
-  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM [LUA_DEVICE_ROM [LUA_TYPOGRAPHY_ROM [LUA_RAYCASTER_ROM]]]]]');
+  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM [LUA_DEVICE_ROM [LUA_TYPOGRAPHY_ROM [LUA_RAYCASTER_ROM [BOOT_SMOKE_ROM]]]]]]');
   process.exit(2);
 }
 
@@ -26,12 +26,21 @@ const STATUS = [
 
 const output = [];
 let fakeNow = 0;
+const screenStats = { pixels: 0, draws: 0, clears: 0 };
 globalThis.__0xvmHost = {
   screen: {
     init() {},
-    reset() { fakeNow = 0; },
+    reset() {
+      fakeNow = 0;
+      screenStats.pixels = 0;
+      screenStats.draws = 0;
+      screenStats.clears = 0;
+    },
     now() { fakeNow += 1; return fakeNow; },
-    color() {}, pixel() {}, draw() {}, clear() {}
+    color() {},
+    pixel() { screenStats.pixels++; },
+    draw() { screenStats.draws++; },
+    clear() { screenStats.clears++; }
   },
   console: { write(text) { output.push(text); } }
 };
@@ -95,6 +104,25 @@ if (conformanceRom) {
     process.exit(1);
   }
   console.log('wasm console conformance: VM_HALTED');
+}
+
+if (bootRom) {
+  output.length = 0;
+  if (api.init(320, 240) !== 0) fail('boot init failed');
+  const boot = Array.from(readFileSync(bootRom));
+  status = api.load(boot, boot.length);
+  if (status !== 0) fail(`boot vmw_load returned ${status}`);
+  /* The boot ROM yields on port 0x41, so each run call advances only one
+   * wait slice. Give the fake timer enough slices to reach BOOT_MAX_MS. */
+  for (let i = 0; i < 5000 && status === 0; i++) status = api.run(100000);
+
+  const bootText = output.join('');
+  if (status !== 1) fail(`boot expected VM_HALTED, got ${STATUS[status] || status}`);
+  if (screenStats.pixels < 1000) fail(`boot drew only ${screenStats.pixels} pixels`);
+  if (screenStats.draws === 0) fail('boot did not present a frame');
+  if (bootText.length !== 0) fail(`screen host should not print boot text: ${bootText}`);
+  if (bootText.includes('Breach')) fail('boot screen path must not print a wordmark');
+  console.log('wasm boot splash: OK');
 }
 
 if (typographyRom) {

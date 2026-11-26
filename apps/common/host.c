@@ -66,6 +66,7 @@ void host_stdio_init(HostStdio *stdio, bool debug)
     stdio->input = stdin;
     stdio->output = stdout;
     stdio->debug = debug;
+    stdio->caps = VM_CAPS_CONSOLE;
 }
 
 static void stdio_prefix(const HostStdio *c, const VmState *vm)
@@ -89,6 +90,9 @@ static VmStatus stdio_read(void *ctx, VmState *vm, uint8_t port, int64_t *out)
             return VM_OK;
         case VM_SYS_DEBUG:
             *out = c->debug ? 1 : 0;
+            return VM_OK;
+        case VM_SYS_CAPS:
+            *out = c->caps;
             return VM_OK;
         case VM_CONSOLE_GETC: {
             int ch = fgetc(c->input);
@@ -184,7 +188,7 @@ static VmStatus stdio_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
 
 int host_stdio_add(VmHost *host, HostStdio *stdio)
 {
-    if (host_add(host, VM_SYS_VERSION, VM_SYS_HALT, stdio,
+    if (host_add(host, VM_SYS_VERSION, VM_SYS_CAPS, stdio,
                  stdio_read, stdio_write) != 0)
         return -1;
     if (host_add(host, VM_CONSOLE_PUTC, VM_CONSOLE_GETI, stdio,

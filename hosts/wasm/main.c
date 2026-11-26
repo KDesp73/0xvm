@@ -158,6 +158,10 @@ static VmStatus web_read(void *ctx, VmState *vm, uint8_t port, int64_t *out)
         case VM_SYS_DEBUG:
             *out = d->debug ? 1 : 0;
             return VM_OK;
+        case VM_SYS_CAPS:
+            *out = VM_CAPS_CONSOLE | VM_CAPS_SCREEN |
+                   VM_CAPS_CONTROLLER | VM_CAPS_TIMER;
+            return VM_OK;
 
         case VM_CONSOLE_GETC: {
             int ch = input_pop_byte(d);

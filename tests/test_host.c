@@ -93,7 +93,8 @@ static void test_stdio_ranges(void)
     CHECK(dev.write(dev.ctx, &vm, VM_SYS_DEBUG, 1) == VM_OK);
     CHECK(dev.read(dev.ctx, &vm, VM_SYS_DEBUG, &out) == VM_OK && out == 1);
     CHECK(dev.write(dev.ctx, &vm, VM_SYS_HALT, 0) == VM_HALTED);
-    CHECK(dev.read(dev.ctx, &vm, 0x03, &out) == VM_ERR_IO);
+    CHECK(dev.read(dev.ctx, &vm, VM_SYS_CAPS, &out) == VM_OK);
+    CHECK(out == VM_CAPS_CONSOLE);
 
     vm_free(&vm);
 }

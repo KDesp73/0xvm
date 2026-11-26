@@ -290,6 +290,7 @@ static int run(const char *path, int width, int height, bool debug)
     host_init(&host);
     HostStdio stdio;
     host_stdio_init(&stdio, debug);
+    stdio.caps |= VM_CAPS_SCREEN | VM_CAPS_CONTROLLER | VM_CAPS_TIMER;
     host_stdio_add(&host, &stdio);
     sdl_device_add(&host, &sdl);
     VmDevice device = host_device(&host);

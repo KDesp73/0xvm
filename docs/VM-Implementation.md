@@ -269,6 +269,7 @@ The CLI installs these ports:
 | `0x00` | `VM_SYS_VERSION` | read | ROM format version (`2`) |
 | `0x01` | `VM_SYS_DEBUG` | read/write | tick-prefix flag |
 | `0x02` | `VM_SYS_HALT` | write | halt with `VM_HALTED` |
+| `0x03` | `VM_SYS_CAPS` | read | capability bitmask (`0x01` console, `0x02` screen, `0x04` controller, `0x08` timer) |
 | `0x10` | `VM_CONSOLE_PUTC` | write | low byte to stdout |
 | `0x11` | `VM_CONSOLE_GETC` | read | one byte from stdin (`0` on EOF) |
 | `0x12` | `VM_CONSOLE_PUTI` | write | signed decimal + newline |

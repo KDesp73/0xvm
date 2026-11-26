@@ -246,7 +246,7 @@ module:
 | `arith.asm` | `INC`, `DEC`, comparisons, shifts |
 | `locals.asm` | `ENTER`, `LEAVE`, `LOCAL_GET/SET` |
 | `console.asm` | `PRINT_CHAR`, `PRINT`, `FPRINT`, `READ_INT`, `PRINT_STR`, `READ_STR` |
-| `ports.asm` | `CONSOLE_*`, `SCREEN_*`, `CONTROLLER_*`, `TIMER_*` port constants |
+| `ports.asm` | `SYS_*`, `CAPS_*`, `CONSOLE_*`, `SCREEN_*`, `CONTROLLER_*`, `TIMER_*` port constants |
 | `screen.asm` | `SCREEN_SIZE`, `SET_COLOR`, `PLOT_XY`, `PLOT`, `DRAW`, `CLEAR` |
 | `controller.asm` | `READ_KEY`, `QUIT_REQUESTED` |
 | `timer.asm` | `NOW_MS` |
