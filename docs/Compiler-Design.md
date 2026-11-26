@@ -17,11 +17,12 @@ committed on its own before the next one starts.
 - Control flow: `if`/`else`, `while`, numeric `for` with an implicit step of `1`.
 - Functions with parameters, locals, `return`, forward calls, and recursion.
 - Static byte/word arrays with literal or dynamic indices.
+- Typed heap allocations, raw pointer offsets, and explicit `free`.
 - Output: `print(integer_expr)` and `print("string literal")`.
 - Static string literals are emitted as `(address, length)` buffers.
 
-Not supported yet: heap allocation, bitwise operations, device I/O, string
-values, modules, or Lua source-line mapping.
+Not supported yet: bitwise operations, device I/O, string values, modules, or
+Lua source-line mapping.
 
 ## Work items
 
@@ -29,7 +30,7 @@ values, modules, or Lua source-line mapping.
 | --- | --- | --- | --- |
 | 1 | Functions with parameters, returns, and scopes | Done | `CALL`/`RET` ABI, arguments via `PICK`, caller cleanup, recursion. |
 | 2 | Arrays/byte buffers and indexing | Done | `a[i]`, `LOAD8`/`STORE8`, `LOAD32`/`STORE32`. |
-| 3 | Heap allocation and pointers | Pending | `alloc(n)`, pointer arithmetic, `FREE`. |
+| 3 | Heap allocation and pointers | Done | `alloc_bytes`/`alloc_words`, pointer offsets, `FREE`. |
 | 4 | Bitwise operators and hex literals | Pending | `&`, `|`, `~`, `<<`, `>>`, `0x...`. |
 | 5 | Static data declarations | Pending | `const`, byte/word arrays, `DB`/`DW`/`DQ` emission. |
 | 6 | Device/runtime intrinsics | Pending | Screen, controller, timer, sleep port. |
@@ -94,21 +95,31 @@ and assignments; out-of-range static indices are rejected.
 
 ### 3. Heap allocation and pointers
 
-**Goal.** Allocate the 1024-byte text buffer and pass addresses to helpers.
+**Goal.** Allocate the 1024-byte text buffer and derive offsets for helpers.
 
 **Syntax sketch.**
 
 ```lua
-local text = alloc(1024)
+local text = alloc_bytes(1024)
 text[caret] = byte
+local tail = text + 16
+tail[0] = 10
+free(text)
 ```
 
-**Design.** Map `alloc`/`free` to `ALLOC`/`FREE`; pointers are ordinary 64-bit
-cells. Pointer arithmetic emits `ADD`/`SUB`. Allocation failures are a runtime
-concern and should be represented explicitly in a later error-handling pass.
+**Design.** `alloc_bytes(n)` emits `ALLOC` with `n` bytes; `alloc_words(n)`
+emits `ALLOC` with `4 * n` bytes. Both return an ordinary 64-bit address that
+can be stored in a local, indexed with the same `LOAD8`/`STORE8` and
+`LOAD32`/`STORE32` paths as static arrays, and combined with `+`/`-`. Pointer
+arithmetic is a raw byte offset, so `words + 4` addresses the second word.
+The compiler tracks literal offsets for compile-time bounds checks; runtime
+offsets and sizes are unchecked and fail through the VM's own address checks.
+`free(ptr)` maps to `FREE` and invalidates the pointer local. Allocation
+failures remain a runtime error for a later error-handling pass.
 
-**Acceptance.** Allocated buffers can be indexed and freed; address arithmetic
-compiles.
+**Acceptance.** Byte and word buffers can be allocated with literal or runtime
+sizes, indexed through derived pointers, and freed. Out-of-range literal
+indices and releases of non-pointer expressions are compile errors.
 
 ### 4. Bitwise operators and hex literals
 
@@ -241,3 +252,5 @@ skip or exit without flag variables.
   recursion; golden fixture `tests/lua/functions.lua`.
 - **Item 2** — static byte/word arrays, indexing, and compile-time bounds
   checks; golden fixture `tests/lua/arrays.lua`.
+- **Item 3** — typed heap allocations, pointer offsets, runtime sizes, and
+  `free`; golden fixture `tests/lua/heap.lua`.

@@ -14,9 +14,25 @@ COMPARE_OPS = {
 
 ARITH_OPS = {'+': 'ADD', '-': 'SUB', '*': 'MUL', '/': 'DIV', '%': 'MOD'}
 
+
+def static_int(expr) -> int | None:
+    """Return a compile-time integer value, or None for a runtime expression."""
+    if isinstance(expr, nodes.Int):
+        return expr.value
+    if isinstance(expr, nodes.Unary) and expr.op == '-':
+        value = static_int(expr.operand)
+        return None if value is None else -value
+    return None
+
+
 ARRAY_CONSTRUCTORS = {
     'byte_array': ('DB', 1),
     'word_array': ('DW', 4),
+}
+
+HEAP_CONSTRUCTORS = {
+    'alloc_bytes': ('DB', 1),
+    'alloc_words': ('DW', 4),
 }
 
 
@@ -38,11 +54,15 @@ class Scope:
 
     def __init__(self):
         self.names: dict[str, int] = {}
-        self.arrays: dict[str, tuple[str, int, int]] = {}
+        self.arrays: dict[str, tuple[str, int, int | None, int | None]] = {}
         self.hidden_count = 0
         self.for_limits: dict[int, str] = {}
 
-    def declare(self, name: str, array: tuple[str, int, int] | None = None) -> int:
+    def declare(
+        self,
+        name: str,
+        array: tuple[str, int, int | None, int | None] | None = None,
+    ) -> int:
         if name not in self.names:
             self.names[name] = len(self.names)
         if array is not None:
@@ -103,7 +123,9 @@ class Codegen:
             self.strings[value] = (label, len(value))
         return self.strings[value][0]
 
-    def emit_array_alloc(self, call: nodes.Call) -> tuple[str, int, int]:
+    def emit_array_alloc(
+        self, call: nodes.Call
+    ) -> tuple[str, int, int, int | None]:
         directive, width = ARRAY_CONSTRUCTORS[call.name]
         if len(call.args) != 1 or not isinstance(call.args[0], nodes.Int):
             raise CompileError(f'{call.name} requires a literal element count')
@@ -113,20 +135,79 @@ class Codegen:
         label = f'__lua_arr_{len(self.arrays)}'
         self.arrays.append((label, directive, size))
         self.emit_instr(f'PUSH {label}')
-        return directive, width, size
+        return directive, width, size, 0
 
-    def array_descriptor(self, base) -> tuple[str, int, int]:
-        if isinstance(base, nodes.Var) and base.name in self.scope.arrays:
-            return self.scope.arrays[base.name]
-        raise CompileError('indexing requires a byte_array or word_array local')
+    def emit_heap_alloc(
+        self, call: nodes.Call
+    ) -> tuple[str, int, int | None, int | None]:
+        directive, width = HEAP_CONSTRUCTORS[call.name]
+        if len(call.args) != 1:
+            raise CompileError(f'{call.name} expects one size argument')
+        count = static_int(call.args[0])
+        if count is not None and count <= 0:
+            raise CompileError(f'{call.name} size must be positive')
+        if count is None:
+            self.emit_num(call.args[0])
+            if width == 4:
+                self.emit_instr('PUSH 4')
+                self.emit_instr('MUL')
+        else:
+            self.emit_instr(f'PUSH {count * width}')
+        self.emit_instr('ALLOC')
+        return directive, width, count, 0
 
-    def check_index(self, index, size: int) -> None:
-        if isinstance(index, nodes.Int) and not 0 <= index.value < size:
-            raise CompileError(f'array index {index.value} out of range 0..{size - 1}')
+    @staticmethod
+    def shift_pointer(
+        ref: tuple[str, int, int | None, int | None],
+        delta: int | None,
+    ) -> tuple[str, int, int | None, int | None]:
+        directive, width, count, offset = ref
+        if offset is None or delta is None:
+            offset = None
+        else:
+            offset += delta
+        return directive, width, count, offset
+
+    def pointer_descriptor(
+        self, expr
+    ) -> tuple[str, int, int | None, int | None] | None:
+        if isinstance(expr, nodes.Var) and expr.name in self.scope.arrays:
+            return self.scope.arrays[expr.name]
+        if isinstance(expr, nodes.Binary) and expr.op in ('+', '-'):
+            left = self.pointer_descriptor(expr.left)
+            right = self.pointer_descriptor(expr.right)
+            if expr.op == '+':
+                if left is not None and right is None:
+                    return self.shift_pointer(left, static_int(expr.right))
+                if right is not None and left is None:
+                    return self.shift_pointer(right, static_int(expr.left))
+            if expr.op == '-' and left is not None and right is None:
+                delta = static_int(expr.right)
+                return self.shift_pointer(left, None if delta is None else -delta)
+        return None
+
+    def array_descriptor(
+        self, base
+    ) -> tuple[str, int, int | None, int | None]:
+        ref = self.pointer_descriptor(base)
+        if ref is None:
+            raise CompileError('indexing requires an array or allocated pointer')
+        return ref
+
+    def check_index(self, index, ref) -> None:
+        _, width, count, offset = ref
+        if count is None or offset is None or not isinstance(index, nodes.Int):
+            return
+        byte_offset = offset + index.value * width
+        if not 0 <= byte_offset < count * width:
+            raise CompileError(
+                f'array index {index.value} out of range for pointer offset {offset}'
+            )
 
     def emit_index_address(self, index: nodes.Index) -> tuple[str, int]:
-        directive, width, size = self.array_descriptor(index.base)
-        self.check_index(index.index, size)
+        ref = self.array_descriptor(index.base)
+        self.check_index(index.index, ref)
+        directive, width, _, _ = ref
         self.emit_num(index.base)
         self.emit_num(index.index)
         if width == 4:
@@ -191,6 +272,10 @@ class Codegen:
         elif isinstance(expr, nodes.Call):
             if expr.name in ARRAY_CONSTRUCTORS:
                 self.emit_array_alloc(expr)
+            elif expr.name in HEAP_CONSTRUCTORS:
+                self.emit_heap_alloc(expr)
+            elif expr.name == 'free':
+                raise CompileError('free is a statement, not an expression')
             else:
                 self.emit_call(expr, keep_result=True)
         elif isinstance(expr, nodes.Index):
@@ -229,8 +314,12 @@ class Codegen:
             if (isinstance(statement.expr, nodes.Call) and
                     statement.expr.name in ARRAY_CONSTRUCTORS):
                 array = self.emit_array_alloc(statement.expr)
+            elif (isinstance(statement.expr, nodes.Call) and
+                  statement.expr.name in HEAP_CONSTRUCTORS):
+                array = self.emit_heap_alloc(statement.expr)
             else:
                 self.emit_num(statement.expr)
+                array = self.pointer_descriptor(statement.expr)
             self.scope.declare(statement.name, array)
             self.emit_instr(f'LOCAL_SET {self.scope.index(statement.name)}')
             return
@@ -238,6 +327,11 @@ class Codegen:
         if isinstance(statement, nodes.Assign):
             self.emit_num(statement.expr)
             self.emit_instr(f'LOCAL_SET {self.scope.index(statement.name)}')
+            array = self.pointer_descriptor(statement.expr)
+            if array is None:
+                self.scope.arrays.pop(statement.name, None)
+            else:
+                self.scope.arrays[statement.name] = array
             return
 
         if isinstance(statement, nodes.AssignIndex):
@@ -259,6 +353,17 @@ class Codegen:
             return
 
         if isinstance(statement, nodes.Call):
+            if statement.name == 'free':
+                if len(statement.args) != 1:
+                    raise CompileError('free expects one pointer argument')
+                pointer = statement.args[0]
+                if (not isinstance(pointer, nodes.Var) or
+                        pointer.name not in self.scope.arrays):
+                    raise CompileError('free expects an allocated pointer variable')
+                self.emit_num(pointer)
+                self.emit_instr('FREE')
+                del self.scope.arrays[pointer.name]
+                return
             self.emit_call(statement, keep_result=False)
             return
 

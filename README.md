@@ -115,9 +115,9 @@ The `luac/` package is an early compiler that emits `0xasm` text rather than a
 ROM, so the assembler still supplies labels and line mapping to `0xdb`. The
 supported subset covers integer literals, string literals passed to `print`,
 locals and assignment, arithmetic and comparisons, `if`/`else`, `while`,
-numeric `for` loops, functions with parameters/returns/recursion, and static
-byte/word arrays with indexing. The roadmap for reaching a typography-level demo
-is in
+numeric `for` loops, functions with parameters/returns/recursion, static
+byte/word arrays with indexing, and typed heap allocations with pointer offsets.
+The roadmap for reaching a typography-level demo is in
 [`docs/Compiler-Design.md`](docs/Compiler-Design.md).
 
 Run it directly from the repository without installing anything:
@@ -140,8 +140,8 @@ pip3 install -e .
 For a non-editable install, run `pip3 install .` instead, or use
 `make luac-install` for the editable form.
 
-Strings are static `(addr, length)` buffers; numbers and function results are
-signed 64-bit cells. Heap allocation, tables, device I/O, and source-level line
+Strings are static `(addr, length)` buffers; numbers, function results, and heap
+addresses are signed 64-bit cells. Tables, device I/O, and source-level line
 remapping are not implemented yet.
 
 ## Performance baselines

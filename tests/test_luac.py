@@ -154,6 +154,51 @@ class LuacTests(unittest.TestCase):
         with self.assertRaises(CompileError):
             compile_source('local x = 1\nprint(x[0])', 'bad.lua')
 
+    def test_codegen_emits_heap_allocation_and_free(self):
+        asm = compile_source(
+            'local p = alloc_bytes(2)\n'
+            'p[0] = 7\n'
+            'print(p[0])\n'
+            'free(p)',
+            'heap.lua',
+        )
+        self.assertIn('    PUSH 2\n    ALLOC', asm)
+        self.assertIn('STORE8', asm)
+        self.assertIn('LOAD8', asm)
+        self.assertIn('    FREE\n', asm)
+        self.assertNotIn('__lua_arr_0:', asm)
+
+    def test_word_heap_allocation_scales_size_and_index(self):
+        asm = compile_source('local w = alloc_words(2)\nprint(w[1])', 'heap.lua')
+        self.assertIn('    PUSH 8\n    ALLOC', asm)
+        self.assertIn('    PUSH 4\n    MUL', asm)
+        self.assertIn('LOAD32', asm)
+
+    def test_runtime_heap_size_is_allowed(self):
+        asm = compile_source(
+            'local n = 2\nlocal p = alloc_bytes(n)\nfree(p)',
+            'heap.lua',
+        )
+        self.assertIn('    ALLOC', asm)
+
+    def test_pointer_offset_is_bounds_checked(self):
+        with self.assertRaises(CompileError):
+            compile_source(
+                'local p = alloc_bytes(2)\nlocal q = p + 1\nprint(q[2])',
+                'bad.lua',
+            )
+
+    def test_free_requires_pointer_variable(self):
+        with self.assertRaises(CompileError):
+            compile_source('local p = alloc_bytes(2)\nfree(p + 1)', 'bad.lua')
+
+    def test_freed_pointer_cannot_be_indexed(self):
+        with self.assertRaises(CompileError):
+            compile_source(
+                'local p = alloc_bytes(2)\nfree(p)\nprint(p[0])',
+                'bad.lua',
+            )
+
 
 if __name__ == '__main__':
     unittest.main()
