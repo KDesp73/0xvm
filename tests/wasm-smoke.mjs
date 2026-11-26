@@ -124,6 +124,16 @@ if (typographyRom) {
   };
 
   waitFrame(); // startup draws the initial frame
+
+  // Once a frame is complete, one animation-frame budget must end at the sleep
+  // request, not burn the whole budget redrawing an unchanged screen.
+  {
+    const before = api.ticks();
+    const st = api.run(250000);
+    if (st !== 0) fail(`typography idle run: ${STATUS[st] || st}`);
+    if (api.ticks() - before >= 250000) fail('typography idle run did not yield');
+  }
+
   press(65); press(66); press(67);          // ABC
   if (text() !== 'ABC') fail(`typography insert: got "${text()}"`);
   press(3); press(3);                       // caret between B and C

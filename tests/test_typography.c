@@ -44,6 +44,8 @@ typedef struct {
     uint32_t color;
     Pixel carets[MAX_CARET_PIXELS];
     size_t caret_count;
+    int sleep_writes;
+    int64_t last_sleep_ms;
 } Typo;
 
 static VmStatus typo_read(void *ctx, VmState *vm, uint8_t port, int64_t *out)
@@ -67,7 +69,10 @@ static VmStatus typo_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
 {
     Typo *t = ctx;
     (void)vm;
-    if (port == VM_SCREEN_COLOR) {
+    if (port == 0x41u) {        /* host sleep extension */
+        t->sleep_writes++;
+        t->last_sleep_ms = value;
+    } else if (port == VM_SCREEN_COLOR) {
         t->color = (uint32_t)(uint64_t)value;
     } else if (port == VM_SCREEN_PIXEL && t->color == CARET_COLOR &&
                t->caret_count < MAX_CARET_PIXELS) {
@@ -145,6 +150,27 @@ static void expect_caret_column(Typo *t, int32_t column)
     t->caret_count = 0u;
 }
 
+/* With no key and nothing dirty the demo must ask the host to sleep, with the
+ * wait capped so input stays responsive. */
+static void expect_sleep(Typo *t)
+{
+    int before = t->sleep_writes;
+    int32_t frames = rd32(&t->vm, G_FRAMES);
+    t->key = 0;
+    for (uint64_t i = 0u; i < 2000000u && t->sleep_writes == before; i++) {
+        VmStatus st = vm_step(&t->vm);
+        if (st != VM_OK) {
+            fprintf(stderr, "FAIL typography: VM stopped with %s\n",
+                    vm_status_str(st));
+            failures++;
+            return;
+        }
+    }
+    CHECK(t->sleep_writes > before);
+    CHECK(t->last_sleep_ms > 0 && t->last_sleep_ms <= 50);
+    CHECK(rd32(&t->vm, G_FRAMES) == frames); /* no redraw while idle */
+}
+
 static void test_editing(void)
 {
     Typo t = {0};
@@ -159,19 +185,21 @@ static void test_editing(void)
     }
 
     /* '6' must have an open tail and a bottom bowl, not a symmetric oval;
-     * lowercase 'n' is x-height and must not reuse the full-height 'N'. */
+     * lowercase 'n' is x-height and must be distinct from both 'N' and 'm'. */
     {
-        /* Records are stored top row last, so memory is the visual glyph
-         * reversed: '6' is an open top curl over a closed bottom bowl. */
+        /* Glyph records are stored bottom row first: byte 0 is the bottom row,
+         * byte 7 is the blank top row. */
         static const uint8_t want6[8] = {0x70,0x88,0x88,0xF0,0x80,0x80,0x70,0x00};
-        static const uint8_t wantn[8] = {0x88,0x88,0xA8,0xA8,0xB0,0x00,0x00,0x00};
-        uint8_t six[8], lower[8], upper[8];
+        static const uint8_t wantn[8] = {0x88,0x88,0x88,0xC8,0xB0,0x00,0x00,0x00};
+        uint8_t six[8], lower[8], upper[8], em[8];
         read_glyph(&t, '6', six);
         read_glyph(&t, 'n', lower);
         read_glyph(&t, 'N', upper);
+        read_glyph(&t, 'm', em);
         CHECK(memcmp(six, want6, sizeof six) == 0);
         CHECK(memcmp(lower, wantn, sizeof lower) == 0);
         CHECK(memcmp(lower, upper, sizeof lower) != 0);
+        CHECK(memcmp(lower, em, sizeof lower) != 0);
     }
 
     press(&t, 0);               /* initial frame, no key */
@@ -212,6 +240,8 @@ static void test_editing(void)
     expect_text(&t, "YB", 2);
     press(&t, 8);               /* backspace last character */
     expect_text(&t, "Y", 1);
+
+    expect_sleep(&t);           /* idle frame hands control to the host */
 
 done:
     if (t.program) {

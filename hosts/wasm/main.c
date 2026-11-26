@@ -39,6 +39,7 @@ typedef struct {
 
     uint16_t puts_addr, puts_len;
     uint16_t gets_addr, gets_max, gets_len;
+    bool sleep_requested;
 } WebDevice;
 
 static VmState g_vm;
@@ -198,6 +199,9 @@ static VmStatus web_read(void *ctx, VmState *vm, uint8_t port, int64_t *out)
         case VM_TIMER_MS:
             *out = (int64_t)vmw_js_now_ms();
             return VM_OK;
+        case 0x41u: /* host extension: sleep ms, as in the SDL host */
+            *out = 0;
+            return VM_OK;
 
         default:
             return VM_ERR_IO;
@@ -288,6 +292,9 @@ static VmStatus web_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
         case VM_SCREEN_CLEAR:
             vmw_js_screen_clear();
             return VM_OK;
+        case 0x41u: /* host extension: yield until the next animation frame */
+            d->sleep_requested = true;
+            return VM_OK;
 
         default:
             return VM_ERR_IO;
@@ -309,6 +316,7 @@ static void reset_runtime(void)
     g_web.gets_max = 0u;
     g_web.gets_len = 0u;
     g_web.quit = false;
+    g_web.sleep_requested = false;
     vmw_js_timer_reset();
 }
 
@@ -352,7 +360,18 @@ EMSCRIPTEN_KEEPALIVE int vmw_step(void)
 EMSCRIPTEN_KEEPALIVE int vmw_run(int budget)
 {
     if (!g_ready || budget <= 0) return (int)g_status;
-    g_status = vm_run(&g_vm, (uint64_t)budget);
+    g_status = VM_OK;
+    g_web.sleep_requested = false;
+    /* Stop as soon as the ROM asks to sleep. The browser calls again on the
+     * next animation frame, which provides the pacing without blocking JS. */
+    for (int i = 0; i < budget; i++) {
+        VmStatus st = vm_step(&g_vm);
+        if (st != VM_OK) {
+            g_status = st;
+            break;
+        }
+        if (g_web.sleep_requested) break;
+    }
     return (int)g_status;
 }
 

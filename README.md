@@ -20,6 +20,8 @@ make sdl              # build 0xvm-sdl (skipped when SDL3 is unavailable)
 make sdl-check        # run the conformance ROM through 0xvm-sdl with dummy video
 make wasm             # build the browser host (skipped when emcc is unavailable)
 make wasm-check       # smoke-run Snake through the browser host under Node
+make bench            # run repeatable benchmarks to build/bench/last.json
+make bench-compare    # compare a fresh run with the committed baseline
 ```
 
 `make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, six tools
@@ -104,6 +106,37 @@ printf 'B-7\nhey\n' | ./build/0xvm -f build/conformance-v2.rom
 
 `make test` checks the same ROM through a fresh scripted host and runs the CLI
 diff automatically.
+
+## Performance baselines
+
+The latest benchmark and profiling results are committed under `bench/` so
+there is always a reference point for comparing changes:
+
+- `bench/baseline.json` — benchmark medians and samples from `scripts/bench.py`.
+- `bench/perf-profile.txt` — instruction profile from the CLI `-p` run.
+
+`make bench` writes a fresh report to `build/bench/last.json`. After an
+intentional performance change, promote the fresh results to the committed
+baselines:
+
+```sh
+make bench-update
+make perf-update
+```
+
+To compare current results with the committed baselines:
+
+```sh
+make bench-compare                 # fails on >25% median MIPS regression
+make bench-compare THRESHOLD=0.10  # stricter threshold
+make perf-compare                  # diffs the current instruction profile
+```
+
+`make bench-compare` runs 20 samples first and compares against
+`bench/baseline.json` by default. Wall-clock results include process startup and
+vary between machines, so `THRESHOLD` is deliberately permissive; tune it for
+your environment. Override `BASELINE=...` and `CURRENT=...` to compare arbitrary
+JSON reports.
 
 ## Assembly quick reference
 

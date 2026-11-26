@@ -87,7 +87,7 @@ idle_wait:
     LOAD32
     SUB
     PUSH FRAME_MS
-    CMP_LT
+    CMP_GE
     JMP_Z idle_wait_more
     JMP frame_ready
 idle_wait_more:
@@ -99,15 +99,17 @@ idle_wait_more:
     SUB
     PUSH G_SLEEP
     STORE32
+    ; A positive sleep means there is time to wait; only draw early when the
+    ; deadline has already passed. Cap long waits so keys stay responsive.
     PUSH G_SLEEP
     LOAD32
     PUSH 0
-    CMP_LE
+    CMP_GT
     JMP_Z frame_ready
     PUSH G_SLEEP
     LOAD32
     PUSH 50
-    CMP_GT
+    CMP_LE
     JMP_Z sleep_cap
     JMP sleep_do
 sleep_cap:
