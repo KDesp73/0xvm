@@ -26,10 +26,10 @@ const STATUS = [
 
 const output = [];
 let fakeNow = 0;
-const screenStats = { pixels: 0, draws: 0, clears: 0 };
+const screenStats = { pixels: 0, draws: 0, clears: 0, sizes: [] };
 globalThis.__0xvmHost = {
   screen: {
-    init() {},
+    init(width, height) { screenStats.sizes.push([width, height]); },
     reset() {
       fakeNow = 0;
       screenStats.pixels = 0;
@@ -72,6 +72,14 @@ function fail(message) {
 
 const initStatus = api.init(320, 240);
 if (initStatus !== 0) fail(`vmw_init returned ${initStatus}`);
+
+/* The browser host re-runs vmw_init when a screen-size preset is chosen. */
+if (api.init(1024, 768) !== 0) fail('resize init failed');
+const resized = screenStats.sizes[screenStats.sizes.length - 1];
+if (!resized || resized[0] !== 1024 || resized[1] !== 768) {
+  fail('screen resize was not passed to the JS host');
+}
+if (api.init(320, 240) !== 0) fail('restore init failed');
 
 const rom = Array.from(readFileSync(romPath));
 let status = api.load(rom, rom.length);

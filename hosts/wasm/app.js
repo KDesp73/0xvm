@@ -30,6 +30,7 @@
   const inputForm = document.getElementById('input-form');
   const consoleInput = document.getElementById('console-input');
   const screenSizeEl = document.getElementById('screen-size');
+  const sizeButtons = Array.from(document.querySelectorAll('[data-screen-w]'));
 
   let startMs = performance.now();
   let currentR = 0;
@@ -37,6 +38,8 @@
   let currentB = 0;
   let frame = null;
   let frameBytes = null;
+  let screenW = 320;
+  let screenH = 240;
 
   /* The host keeps an offscreen framebuffer so a partially drawn VM frame is
    * never presented. This mirrors the SDL3 host: CLEAR and PIXEL only write to
@@ -170,7 +173,7 @@
       running = false;
       romBytes = bytes;
       romName = name;
-      api.init(320, 240);
+      api.init(screenW, screenH);
       consoleEl.textContent = '';
       const st = api.load(bytes, bytes.length);
       setStatus(`${name}: ${STATUS_NAMES[st] || 'UNKNOWN'}`, statusState(st));
@@ -189,6 +192,30 @@
         setStatus(`Could not load ${url}; choose a ROM file`, 'error');
       }
     }
+
+    function markSize() {
+      for (const button of sizeButtons) {
+        const active = Number(button.dataset.screenW) === screenW &&
+                       Number(button.dataset.screenH) === screenH;
+        button.classList.toggle('primary', active);
+        button.setAttribute('aria-pressed', String(active));
+      }
+    }
+
+    function applySize(w, h) {
+      if (w < 16 || w > 4096 || h < 16 || h > 4096) return;
+      screenW = w;
+      screenH = h;
+      markSize();
+      if (romBytes) {
+        load(romBytes, romName);
+      } else {
+        api.init(screenW, screenH);
+        setStatus(`screen ${screenW} × ${screenH}`, 'idle');
+      }
+    }
+
+    markSize();
 
     function pump() {
       if (running) {
@@ -220,6 +247,15 @@
       if (romBytes) load(romBytes, romName);
     });
 
+    for (const button of sizeButtons) {
+      button.addEventListener('click', () => {
+        applySize(
+          Number(button.dataset.screenW),
+          Number(button.dataset.screenH)
+        );
+      });
+    }
+
     loadBtn.addEventListener('click', () => romInput.click());
     romInput.addEventListener('change', async () => {
       const file = romInput.files && romInput.files[0];
@@ -241,7 +277,7 @@
     });
 
     window.addEventListener('keydown', (event) => {
-      if (event.target === consoleInput || event.target === romInput) return;
+      if (event.target.closest && event.target.closest('form')) return;
       const code = mapKey(event);
       if (code !== 0) {
         api.pushKey(code);

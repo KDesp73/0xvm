@@ -42,9 +42,11 @@ python3 -m http.server 8000 --directory build
 ```
 
 The page loads `boot.rom` by default and exposes Run/Pause, Restart, a
-`load file` button for any VMIM v2 ROM, and a Console panel. Demo-ROM links and
-`?rom=` selection are intentionally omitted. Arrow keys, space, enter, and
-escape map to the portable Controller codes.
+`load file` button for any VMIM v2 ROM, four screen-size presets
+(320×240, 640×480, 800×600, and 1024×768; choosing one restarts the ROM at
+that size), and a Console panel. Demo-ROM links and `?rom=` selection are intentionally
+omitted. Arrow keys, space, enter, and escape map to the portable Controller
+codes.
 
 | Tool | Purpose |
 | --- | --- |

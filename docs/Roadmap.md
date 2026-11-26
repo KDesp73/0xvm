@@ -61,8 +61,8 @@ The next milestone is a Lua-subset compiler targeting the stdlib runtime.
    - Added a browser host behind the same `VmDevice` callback split so programs
      can be loaded from a file.
    - The canvas page loads `boot.rom` by default, keeps Run/Pause, Restart,
-     load-file, and console controls, and maps keyboard input to the portable
-     Controller codes; the Node smoke check runs Snake headlessly.
+     load-file, screen-size presets, and console controls, and maps keyboard input to
+     the portable Controller codes; the Node smoke check runs Snake headlessly.
    - Kept the core, CLI tools, and native test suite free of host GUI dependencies.
 
 4. **Lua-subset compiler — [next].**
