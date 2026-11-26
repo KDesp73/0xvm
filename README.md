@@ -123,7 +123,9 @@ screen, controller, timer, and host sleep port. The roadmap that led to the
 typography-level demo is in
 [`docs/Compiler-Design.md`](docs/Compiler-Design.md). The completed capstone is
 [`examples/typography.lua`](examples/typography.lua), a graphical text editor
-with a bitmap font, caret editing, blink, and a timed main loop.
+with a bitmap font, caret editing, blink, and a timed main loop. A second
+capstone, [`examples/raycaster.lua`](examples/raycaster.lua), is a first-person
+maze explorer with DDA raycasting, shaded walls, and a minimap.
 
 Run it directly from the repository without installing anything:
 
@@ -142,6 +144,15 @@ python3 -m luac compile examples/typography.lua -o build/lua-typography.asm -m b
 ./build/0xasm -f build/lua-typography.asm -o build/lua-typography.rom
 ./build/0xvm-sdl -f build/lua-typography.rom -W 320 -H 240
 make lua-typography-check  # CLI golden run plus a bounded SDL smoke run
+```
+
+Build and run the Lua raycaster the same way:
+
+```sh
+python3 -m luac compile examples/raycaster.lua -o build/lua-raycaster.asm -m build/lua-raycaster.lumap
+./build/0xasm -f build/lua-raycaster.asm -o build/lua-raycaster.rom
+./build/0xvm -f build/lua-raycaster.rom  # CLI golden: RAYCASTER OK
+make lua-raycaster-check  # CLI golden run plus a bounded SDL smoke run
 ```
 
 The package can also be installed as the `0xluac` command. The name avoids a

@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const [jsPath, romPath, conformanceRom, expectedPath, typographyRom, luaDeviceRom, luaTypographyRom] = process.argv.slice(2);
+const [jsPath, romPath, conformanceRom, expectedPath, typographyRom, luaDeviceRom, luaTypographyRom, luaRaycasterRom] = process.argv.slice(2);
 if (!jsPath || !romPath) {
-  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM [LUA_DEVICE_ROM [LUA_TYPOGRAPHY_ROM]]]]');
+  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM [LUA_DEVICE_ROM [LUA_TYPOGRAPHY_ROM [LUA_RAYCASTER_ROM]]]]]');
   process.exit(2);
 }
 
@@ -215,4 +215,58 @@ if (luaTypographyRom) {
   if (status !== 1) fail(`Lua typography exit: ${STATUS[status] || status}`);
   if (!output.join('').includes('TYPOGRAPHY OK')) fail('missing Lua typography output');
   console.log('wasm Lua typography editing: OK');
+}
+
+if (luaRaycasterRom) {
+  output.length = 0;
+  if (api.init(320, 240) !== 0) fail('Lua raycaster init failed');
+  const luaRaycaster = Array.from(readFileSync(luaRaycasterRom));
+  status = api.load(luaRaycaster, luaRaycaster.length);
+  if (status !== 0) fail(`Lua raycaster vmw_load returned ${status}`);
+  status = api.run(10000);
+  if (status !== 0) fail(`Lua raycaster startup: ${STATUS[status] || status}`);
+
+  const pushKeyRay = mod.cwrap('vmw_push_key', null, ['number']);
+  const peek8Ray = mod.cwrap('vmw_peek8', 'number', ['number']);
+  const rd32Ray = (addr) => ((peek8Ray(addr) << 24) | (peek8Ray(addr + 1) << 16) |
+                             (peek8Ray(addr + 2) << 8) | peek8Ray(addr + 3)) | 0;
+  const lines = output.join('').split('\n');
+  const stateAddr = Number(lines[1]);
+  if (!Number.isInteger(stateAddr)) fail(`Lua raycaster labels: ${lines.join('|')}`);
+
+  const rayX = () => rd32Ray(stateAddr + 2 * 4);
+  const rayY = () => rd32Ray(stateAddr + 3 * 4);
+  const rayAngle = () => rd32Ray(stateAddr + 4 * 4);
+  const waitRayChange = (x, y, angle) => {
+    for (let i = 0; i < 50 && status === 0; i++) {
+      if (rayX() !== x || rayY() !== y || rayAngle() !== angle) return;
+      status = api.run(100000);
+    }
+    if (status !== 0) fail(`Lua raycaster stopped: ${STATUS[status] || status}`);
+    fail('Lua raycaster input had no effect');
+  };
+  const pressRay = (key) => {
+    const x = rayX();
+    const y = rayY();
+    const angle = rayAngle();
+    pushKeyRay(key);
+    waitRayChange(x, y, angle);
+  };
+
+  pressRay(3);
+  if (rayAngle() === 0) fail('Lua raycaster turn had no effect');
+  const beforeX = rayX();
+  const beforeY = rayY();
+  pressRay(1);
+  if (rayX() === beforeX && rayY() === beforeY) fail('Lua raycaster move had no effect');
+  const strafeX = rayX();
+  const strafeY = rayY();
+  pressRay(5);
+  if (rayX() === strafeX && rayY() === strafeY) fail('Lua raycaster strafe had no effect');
+
+  pushKeyRay(7);
+  for (let i = 0; i < 50 && status === 0; i++) status = api.run(100000);
+  if (status !== 1) fail(`Lua raycaster exit: ${STATUS[status] || status}`);
+  if (!output.join('').includes('RAYCASTER OK')) fail('missing Lua raycaster output');
+  console.log('wasm Lua raycaster controls: OK');
 }

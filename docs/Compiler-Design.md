@@ -325,6 +325,8 @@ compile errors.
   using the font table, layout helpers, caret editing, blink, and timed loop.
   Its `ENABLE` constant is flipped for the CLI golden run, and bounded smoke
   builds run under SDL3 and WASM.
+- **Raycaster capstone** — `examples/raycaster.lua`, a fixed-point DDA maze
+  explorer with shaded walls, collision, minimap, and scripted browser checks.
 
 ## Capstone demo
 
@@ -343,3 +345,20 @@ SDL3 smoke build (`FRAME_MS = 1`, `MAX_FRAMES = 3`) that draws the full editor.
 insert, caret movement, backspace, delete, and exit in the browser host. The
 assembly demo remains unchanged, so its browser editing checks continue to
 cover the original app too.
+
+## Raycaster demo
+
+`examples/raycaster.lua` is a second complex program built from the same
+subset. It uses 8.8 fixed-point player coordinates, 256-entry sine/cosine
+lookup tables, and integer DDA to cast one ray per screen column. Wall distance
+selects a colour from near-to-far palettes, and Y-side hits use a darker
+palette. A cell map, minimap, collision tests, and all mutable player state are
+`const` data tables, since top-level locals cannot be shared across functions.
+
+`ENABLE` defaults to `0` here, so a plain CLI run prints the intro and
+`RAYCASTER OK`. SDL3 and WASM builds flip it to `1`; the bounded smoke build
+also sets `FRAME_MS = 1` and `MAX_FRAMES = 3`. `make lua-raycaster-check` covers
+the CLI golden and a rendered SDL smoke run. `make wasm-check` builds a
+`REPORT = 1`, `FRAME_MS = 0` variant so scripted key presses are consumed
+without waiting on wall-clock pacing, then checks turn, move, strafe, and exit
+in the browser host.
