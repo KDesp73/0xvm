@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zero-x-luac"
+dynamic = ["version"]
+description = "Compiler for a Lua subset targeting 0xvm assembly"
+requires-python = ">=3.10"
+
+[project.scripts]
+0xluac = "luac.cli:main"
+
+[tool.setuptools]
+packages = ["luac"]
+
+[tool.setuptools.dynamic]
+version = {attr = "luac.__version__"}

@@ -22,6 +22,8 @@ make wasm             # build the browser host (skipped when emcc is unavailable
 make wasm-check       # smoke-run Snake through the browser host under Node
 make bench            # run repeatable benchmarks to build/bench/last.json
 make bench-compare    # compare a fresh run with the committed baseline
+make lua-check        # compile and run the Lua-subset smoke program
+make luac-install     # install the 0xluac CLI in editable mode
 ```
 
 `make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, six tools
@@ -106,6 +108,60 @@ printf 'B-7\nhey\n' | ./build/0xvm -f build/conformance-v2.rom
 
 `make test` checks the same ROM through a fresh scripted host and runs the CLI
 diff automatically.
+
+## Lua-subset compiler
+
+The `luac/` package is an early compiler that emits `0xasm` text rather than a
+ROM, so the assembler still supplies labels and line mapping to `0xdb`. The
+supported subset covers integer literals, string values, locals and assignment,
+arithmetic and comparisons, `if`/`elseif`/`else`, `while`, numeric `for` loops
+with `break`/`continue`, functions with parameters/returns/recursion, static
+byte/word arrays with indexing, typed heap allocations with pointer offsets,
+bitwise operators with hex literals, `const` values with initialized data tables,
+string bindings, top-level `import` modules, and device intrinsics for the
+screen, controller, timer, and host sleep port. The roadmap that led to the
+typography-level demo is in
+[`docs/Compiler-Design.md`](docs/Compiler-Design.md). The completed capstone is
+[`examples/typography.lua`](examples/typography.lua), a graphical text editor
+with a bitmap font, caret editing, blink, and a timed main loop.
+
+Run it directly from the repository without installing anything:
+
+```sh
+python3 -m luac compile tests/lua/smoke.lua -o build/smoke.asm -m build/smoke.lumap
+./build/0xasm -f build/smoke.asm -o build/smoke.rom
+./build/0xvm -f build/smoke.rom
+./build/0xdb -f build/smoke.rom -s build/smoke.asm -m build/smoke.lumap
+make lua-check    # front-end unit tests plus all golden programs
+```
+
+Build and run the Lua typography demo with the SDL3 host:
+
+```sh
+python3 -m luac compile examples/typography.lua -o build/lua-typography.asm -m build/lua-typography.lumap
+./build/0xasm -f build/lua-typography.asm -o build/lua-typography.rom
+./build/0xvm-sdl -f build/lua-typography.rom -W 320 -H 240
+make lua-typography-check  # CLI golden run plus a bounded SDL smoke run
+```
+
+The package can also be installed as the `0xluac` command. The name avoids a
+collision with the `luac` compiler shipped with Lua:
+
+```sh
+pip3 install -e .
+0xluac compile tests/lua/smoke.lua -o build/smoke.asm
+```
+
+For a non-editable install, run `pip3 install .` instead, or use
+`make luac-install` for the editable form.
+
+Strings are static `(addr, length)` buffers and string locals occupy two VM
+cells; numbers, function results, and heap addresses are signed 64-bit cells.
+Imports are resolved relative to the importing file and flattened into one
+assembly output; duplicate or circular imports are errors. `-m/--map` writes a
+Lua source-line sidecar that `0xdb` loads with `-m/--lua-map`, so stepping and
+line breakpoints can use Lua files and line numbers. Table values and string
+function parameters/returns are not implemented yet.
 
 ## Performance baselines
 

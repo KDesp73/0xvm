@@ -1,0 +1,11 @@
+0xdb: loaded build/lua-control.rom (216 bytes)
+-> 0x0100: JMP 0x0103  build/lua-control.asm:4
+Breakpoint 0 set at 0x015C.
+Stopped: breakpoint (ticks=52)
+-> 0x015C: LOCAL_GET 0  tests/lua/control.lua:9
+ip=0x015C sp=4 fp=0 fsp=0 hp=0x4000 ticks=52 status=VM_OK
+-> 0x015C: LOCAL_GET 0  tests/lua/control.lua:9
+-> 0x015E: PUSH 10  tests/lua/control.lua:9
+15
+Stopped: VM_HALTED (ticks=116)
+-> 0x01D7: HALT  build/lua-control.asm:78

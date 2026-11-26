@@ -69,9 +69,36 @@ TYPOGRAPHY_DIR = examples/typography
 TYPOGRAPHY_SRC = $(wildcard $(TYPOGRAPHY_DIR)/*.asm)
 TYPOGRAPHY_SMOKE_SRC = $(BUILD_DIR)/typography-smoke.asm
 TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
+LUAC_MODULES    = $(wildcard luac/*.py)
+PYPROJECT       = pyproject.toml
+PIP            ?= pip3
+LUA_CASES       = smoke functions arrays heap bitops data strings modules control devices
+LUA_SRCS        = $(foreach case,$(LUA_CASES),$(TEST_DIR)/lua/$(case).lua)
+LUA_MODULE_SRCS = $(wildcard $(TEST_DIR)/lua/modules/*.lua)
+LUA_ASMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).asm)
+LUA_MAPS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).lumap)
+.SECONDARY: $(LUA_ASMS)
+LUA_ROMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).rom)
+LUA_DEVICE_SMOKE_SRC = $(BUILD_DIR)/lua-devices-smoke.lua
+LUA_DEVICE_SMOKE_ROM = $(BUILD_DIR)/lua-devices-smoke.rom
+LUA_TYPOGRAPHY_SRC = examples/typography.lua
+LUA_TYPOGRAPHY_ASM = $(BUILD_DIR)/lua-typography.asm
+LUA_TYPOGRAPHY_ROM = $(BUILD_DIR)/lua-typography.rom
+LUA_TYPOGRAPHY_CLI_SRC = $(BUILD_DIR)/lua-typography-cli.lua
+LUA_TYPOGRAPHY_CLI_ASM = $(BUILD_DIR)/lua-typography-cli.asm
+LUA_TYPOGRAPHY_CLI_ROM = $(BUILD_DIR)/lua-typography-cli.rom
+LUA_TYPOGRAPHY_SMOKE_SRC = $(BUILD_DIR)/lua-typography-smoke.lua
+LUA_TYPOGRAPHY_SMOKE_ASM = $(BUILD_DIR)/lua-typography-smoke.asm
+LUA_TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/lua-typography-smoke.rom
+LUA_TYPOGRAPHY_WASM_SRC = $(BUILD_DIR)/lua-typography-wasm.lua
+LUA_TYPOGRAPHY_WASM_ASM = $(BUILD_DIR)/lua-typography-wasm.asm
+LUA_TYPOGRAPHY_WASM_ROM = $(BUILD_DIR)/lua-typography-wasm.rom
+LUA_TYPOGRAPHY_EXPECTED = $(TEST_DIR)/lua/typography.expected
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
+LUA_DEBUG_SCRIPT = $(TEST_DIR)/lua/control.dbg.in
+LUA_DEBUG_EXPECTED = $(TEST_DIR)/lua/control.dbg.expected
 UNAME_S   := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     SHARED_FLAG = -dynamiclib
@@ -253,6 +280,108 @@ typography-check: $(TYPOGRAPHY_ROM) $(TYPOGRAPHY_SMOKE_ROM) $(SDL_HOST)
 		exit 0
 endif
 
+$(BUILD_DIR)/lua-%.asm: $(TEST_DIR)/lua/%.lua $(LUA_MODULE_SRCS) \
+                        $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua source $*"
+	@python3 -m luac compile $< -o $@ -m $(BUILD_DIR)/lua-$*.lumap
+
+$(BUILD_DIR)/lua-%.lumap: $(TEST_DIR)/lua/%.lua $(LUA_MODULE_SRCS) \
+                          $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua source map $*"
+	@python3 -m luac compile $< -o $(BUILD_DIR)/lua-$*.asm -m $@
+
+$(BUILD_DIR)/lua-%.rom: $(BUILD_DIR)/lua-%.asm $(BUILD_DIR)/0xasm
+	@echo "[INFO] Assembling Lua output $*"
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+$(LUA_DEVICE_SMOKE_SRC): $(TEST_DIR)/lua/devices.lua | $(BUILD_DIR)
+	@sed 's/^const ENABLE = 0$$/const ENABLE = 1/' $< > $@
+
+$(BUILD_DIR)/lua-devices-smoke.asm: $(LUA_DEVICE_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua device smoke source"
+	@python3 -m luac compile $< -o $@
+
+$(LUA_TYPOGRAPHY_ASM): $(LUA_TYPOGRAPHY_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography source"
+	@python3 -m luac compile $< -o $@ -m $(BUILD_DIR)/lua-typography.lumap
+
+$(LUA_TYPOGRAPHY_CLI_SRC): $(LUA_TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@sed 's/^const ENABLE = 1$$/const ENABLE = 0/' $< > $@
+
+$(LUA_TYPOGRAPHY_CLI_ASM): $(LUA_TYPOGRAPHY_CLI_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography CLI source"
+	@python3 -m luac compile $< -o $@
+
+$(LUA_TYPOGRAPHY_SMOKE_SRC): $(LUA_TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@sed -e 's/^const FRAME_MS = 66$$/const FRAME_MS = 1/' \
+	     -e 's/^const MAX_FRAMES = 0$$/const MAX_FRAMES = 3/' $< > $@
+
+$(LUA_TYPOGRAPHY_SMOKE_ASM): $(LUA_TYPOGRAPHY_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography smoke source"
+	@python3 -m luac compile $< -o $@
+
+$(LUA_TYPOGRAPHY_WASM_SRC): $(LUA_TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@sed 's/^const REPORT = 0$$/const REPORT = 1/' $< > $@
+
+$(LUA_TYPOGRAPHY_WASM_ASM): $(LUA_TYPOGRAPHY_WASM_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography browser source"
+	@python3 -m luac compile $< -o $@
+
+.PHONY: lua-device-check
+ifeq ($(SDL_HOST),)
+lua-device-check: $(LUA_DEVICE_SMOKE_ROM)
+	@echo "[RUN] Lua device intrinsic check (SDL3 not found)"
+else
+lua-device-check: $(LUA_DEVICE_SMOKE_ROM) $(SDL_HOST)
+	@echo "[RUN] Lua device intrinsic SDL smoke check (dummy video)"
+	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(LUA_DEVICE_SMOKE_ROM) -W 320 -H 240 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'DEVICE OK' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+endif
+
+.PHONY: lua-typography-check
+ifeq ($(SDL_HOST),)
+lua-typography-check: $(LUA_TYPOGRAPHY_ROM) $(LUA_TYPOGRAPHY_CLI_ROM) \
+                      $(LUA_TYPOGRAPHY_EXPECTED) $(BUILD_DIR)/0xvm
+else
+lua-typography-check: $(LUA_TYPOGRAPHY_ROM) $(LUA_TYPOGRAPHY_CLI_ROM) \
+                      $(LUA_TYPOGRAPHY_SMOKE_ROM) $(LUA_TYPOGRAPHY_EXPECTED) \
+                      $(BUILD_DIR)/0xvm $(SDL_HOST)
+endif
+	@echo "[RUN] Lua typography CLI check"
+	@./$(BUILD_DIR)/0xvm -f $(LUA_TYPOGRAPHY_CLI_ROM) 2>/dev/null \
+		| sed '/^\[INFO\] /d' > $(BUILD_DIR)/lua-typography-actual.txt
+	@diff -u $(LUA_TYPOGRAPHY_EXPECTED) $(BUILD_DIR)/lua-typography-actual.txt
+ifeq ($(SDL_HOST),)
+	@echo "[RUN] Lua typography SDL check (SDL3 not found)"
+else
+	@echo "[RUN] Lua typography SDL smoke check (dummy video)"
+	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(LUA_TYPOGRAPHY_SMOKE_ROM) \
+		-W 320 -H 240 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'TYPOGRAPHY OK' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+endif
+
+.PHONY: lua-check
+lua-check: $(LUA_ROMS) $(LUA_MAPS) $(BUILD_DIR)/0xvm ## Compile and run the Lua subset golden programs
+	@echo "[RUN] Lua compiler front-end unit checks"
+	@python3 $(TEST_DIR)/test_luac.py
+	@for case in $(LUA_CASES); do \
+		echo "[RUN] Lua $$case check"; \
+		./$(BUILD_DIR)/0xvm -f $(BUILD_DIR)/lua-$$case.rom 2>/dev/null \
+			| sed '/^\[INFO\] /d' > $(BUILD_DIR)/lua-$$case-actual.txt; \
+		diff -u $(TEST_DIR)/lua/$$case.expected $(BUILD_DIR)/lua-$$case-actual.txt || exit 1; \
+	done
+
+.PHONY: luac-install
+luac-install: ## Install the 0xluac CLI in editable mode
+	@echo "[INFO] Installing 0xluac"
+	@$(PIP) install -e .
+
 .PHONY: conformance-check
 conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM through the CLI host
 	@echo "[RUN] CLI conformance check"
@@ -267,12 +396,26 @@ debugger-check: $(BUILD_DIR)/0xdb examples/gcd.asm $(DEBUGGER_SCRIPT) $(DEBUGGER
 		> $(BUILD_DIR)/debugger-actual.txt
 	@diff -u $(DEBUGGER_EXPECTED) $(BUILD_DIR)/debugger-actual.txt
 
+.PHONY: lua-debug-check
+lua-debug-check: $(BUILD_DIR)/0xdb $(BUILD_DIR)/lua-control.rom \
+                 $(BUILD_DIR)/lua-control.asm $(BUILD_DIR)/lua-control.lumap \
+                 $(LUA_DEBUG_SCRIPT) $(LUA_DEBUG_EXPECTED) ## Step Lua source via 0xdb
+	@echo "[RUN] 0xdb Lua source-map check"
+	@./$(BUILD_DIR)/0xdb -f $(BUILD_DIR)/lua-control.rom \
+		-s $(BUILD_DIR)/lua-control.asm -m $(BUILD_DIR)/lua-control.lumap \
+		-x $(LUA_DEBUG_SCRIPT) > $(BUILD_DIR)/lua-debug-actual.txt
+	@diff -u $(LUA_DEBUG_EXPECTED) $(BUILD_DIR)/lua-debug-actual.txt
+
 .PHONY: test
 test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformance checks
 	@echo "[RUN] 0xtest"
 	@$(TEST_BIN)
 	@$(MAKE) --no-print-directory conformance-check
+	@$(MAKE) --no-print-directory lua-check
+	@$(MAKE) --no-print-directory lua-device-check
+	@$(MAKE) --no-print-directory lua-typography-check
 	@$(MAKE) --no-print-directory debugger-check
+	@$(MAKE) --no-print-directory lua-debug-check
 	@$(MAKE) --no-print-directory snake-check
 	@$(MAKE) --no-print-directory typography-check
 	@$(MAKE) --no-print-directory sdl-check
@@ -325,7 +468,8 @@ bench-compare: bench ## Compare current benchmarks with the committed baseline [
 
 .PHONY: wasm
 ifeq ($(EMCC_FOUND),yes)
-wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) ## Build the browser/WASM host and example ROMs
+wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) \
+      $(LUA_TYPOGRAPHY_ROM) ## Build the browser/WASM host and example ROMs
 else
 wasm:
 	@echo "[WARN] emcc not found; skipping browser/WASM host"
@@ -334,10 +478,12 @@ endif
 .PHONY: wasm-check
 ifeq ($(EMCC_FOUND),yes)
 ifeq ($(NODE_FOUND),yes)
-wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) ## Smoke-run Snake, conformance and typography in the browser host under Node
+wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) \
+            $(LUA_DEVICE_SMOKE_ROM) $(LUA_TYPOGRAPHY_WASM_ROM) ## Smoke-run Snake, conformance, typography, and Lua examples in the browser host under Node
 	@echo "[RUN] WASM Snake smoke check"
 	@$(NODE) tests/wasm-smoke.mjs $(WASM_JS) $(SNAKE_SMOKE_ROM) \
-		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED) $(TYPOGRAPHY_ROM)
+		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED) $(TYPOGRAPHY_ROM) \
+		$(LUA_DEVICE_SMOKE_ROM) $(LUA_TYPOGRAPHY_WASM_ROM)
 else
 wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM)
 	@echo "[WARN] node not found; skipping WASM Snake smoke check"

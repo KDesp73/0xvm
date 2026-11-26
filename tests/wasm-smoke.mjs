@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const [jsPath, romPath, conformanceRom, expectedPath, typographyRom] = process.argv.slice(2);
+const [jsPath, romPath, conformanceRom, expectedPath, typographyRom, luaDeviceRom, luaTypographyRom] = process.argv.slice(2);
 if (!jsPath || !romPath) {
-  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM]]');
+  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM [LUA_DEVICE_ROM [LUA_TYPOGRAPHY_ROM]]]]');
   process.exit(2);
 }
 
@@ -146,4 +146,73 @@ if (typographyRom) {
   if (rd32(24) !== 2) fail(`typography caret after delete: got ${rd32(24)}`);
 
   console.log('wasm typography editing: OK');
+}
+
+if (luaDeviceRom) {
+  output.length = 0;
+  if (api.init(320, 240) !== 0) fail('Lua device init failed');
+  const lua = Array.from(readFileSync(luaDeviceRom));
+  status = api.load(lua, lua.length);
+  if (status !== 0) fail(`Lua device vmw_load returned ${status}`);
+  for (let i = 0; i < 100 && status === 0; i++) status = api.run(100000);
+
+  const text = output.join('');
+  if (!text.includes('DEVICE OK')) fail('missing Lua device output');
+  if (status !== 1) fail(`Lua device expected VM_HALTED, got ${STATUS[status] || status}`);
+  console.log('wasm Lua device intrinsics: OK');
+}
+
+if (luaTypographyRom) {
+  output.length = 0;
+  if (api.init(320, 240) !== 0) fail('Lua typography init failed');
+  const luaTypography = Array.from(readFileSync(luaTypographyRom));
+  status = api.load(luaTypography, luaTypography.length);
+  if (status !== 0) fail(`Lua typography vmw_load returned ${status}`);
+  status = api.run(10000);
+  if (status !== 0) fail(`Lua typography startup: ${STATUS[status] || status}`);
+
+  const pushKeyLua = mod.cwrap('vmw_push_key', null, ['number']);
+  const peek8Lua = mod.cwrap('vmw_peek8', 'number', ['number']);
+  const rd32Lua = (addr) => ((peek8Lua(addr) << 24) | (peek8Lua(addr + 1) << 16) |
+                             (peek8Lua(addr + 2) << 8) | peek8Lua(addr + 3)) | 0;
+  const lines = output.join('').split('\n');
+  const stateAddr = Number(lines[1]);
+  const textAddr = Number(lines[2]);
+  if (!Number.isInteger(stateAddr) || !Number.isInteger(textAddr)) {
+    fail(`Lua typography labels: ${lines.join('|')}`);
+  }
+
+  const framesLua = () => rd32Lua(stateAddr + 7 * 4);
+  const waitFrameLua = () => {
+    const before = framesLua();
+    for (let i = 0; i < 100 && framesLua() === before && status === 0; i++) {
+      status = api.run(10000);
+    }
+    if (status !== 0) fail(`Lua typography stopped: ${STATUS[status] || status}`);
+  };
+  const pressLua = (key) => { pushKeyLua(key); waitFrameLua(); };
+  const textLua = () => {
+    const len = rd32Lua(stateAddr + 4 * 4);
+    let s = '';
+    for (let i = 0; i < len && i < 32; i++) s += String.fromCharCode(peek8Lua(textAddr + i));
+    return s;
+  };
+
+  waitFrameLua();
+  pressLua(65); pressLua(66); pressLua(67);
+  if (textLua() !== 'ABC') fail(`Lua typography insert: got "${textLua()}"`);
+  pressLua(3); pressLua(3);
+  if (rd32Lua(stateAddr + 5 * 4) !== 1) fail(`Lua typography caret: got ${rd32Lua(stateAddr + 5 * 4)}`);
+  pressLua(8);
+  if (textLua() !== 'BC') fail(`Lua typography backspace: got "${textLua()}"`);
+  pressLua(88); pressLua(89);
+  pressLua(9);
+  if (textLua() !== 'XYC') fail(`Lua typography delete: got "${textLua()}"`);
+  if (rd32Lua(stateAddr + 5 * 4) !== 2) fail(`Lua typography caret after delete: got ${rd32Lua(stateAddr + 5 * 4)}`);
+
+  pushKeyLua(7);
+  for (let i = 0; i < 100 && status === 0; i++) status = api.run(10000);
+  if (status !== 1) fail(`Lua typography exit: ${STATUS[status] || status}`);
+  if (!output.join('').includes('TYPOGRAPHY OK')) fail('missing Lua typography output');
+  console.log('wasm Lua typography editing: OK');
 }

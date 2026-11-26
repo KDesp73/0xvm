@@ -41,7 +41,7 @@ LOGAPI void logging_log(log_level_t log_level, char* format, ...);
     } while(0)
 
 #define INFO(format, ...) \
-    LOG(stdout, "INFO", format, ##__VA_ARGS__)
+    LOG(stderr, "INFO", format, ##__VA_ARGS__)
 
 #define ERRO(format, ...) \
     LOG(stderr, "ERRO", format, ##__VA_ARGS__)
