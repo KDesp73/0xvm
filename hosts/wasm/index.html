@@ -53,7 +53,9 @@
       </aside>
     </div>
   </main>
-  <script src="0xvm-wasm.js"></script>
-  <script src="0xvm-app.js"></script>
+  <!-- Bump the query when the host scripts change so browsers do not keep an
+       old key map (e.g. one without Backspace/Delete) after a rebuild. -->
+  <script src="0xvm-wasm.js?v=2"></script>
+  <script src="0xvm-app.js?v=2"></script>
 </body>
 </html>

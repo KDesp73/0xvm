@@ -241,9 +241,9 @@ Screen, Controller, and timer ports:
 Screen, Controller, and timer ports are optional: a ROM that uses them depends
 on a host that provides them, and reads of unprovided ports return `VM_ERR_IO`.
 Controller key codes are `0` for none, `1..4` for up/down/left/right, `5` for
-space, `6` for enter, `7` for escape, and `32..126` for printable ASCII. A key
-is delivered once and cleared by the read. Other hosts may assign different
-meanings to other ports.
+space, `6` for enter, `7` for escape, `8` for backspace, `9` for delete, and
+`32..126` for printable ASCII. A key is delivered once and cleared by the read.
+Other hosts may assign different meanings to other ports.
 
 Read ports are synchronous and blocking: `GETC`, `GETI`, and `GETS` wait for host
 input and have no ready/status port. `GETC` reports EOF as `0`; `GETI` reports

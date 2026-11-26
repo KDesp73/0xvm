@@ -223,7 +223,9 @@
 
     const romUrl = new URLSearchParams(location.search).get('rom') || 'snake.rom';
     try {
-      const response = await fetch(romUrl);
+      // The ROM is rebuilt often while developing; never let the browser
+      // serve a cached copy from before a fix landed.
+      const response = await fetch(romUrl, { cache: 'no-store' });
       if (!response.ok) throw new Error(String(response.status));
       load(Array.from(new Uint8Array(await response.arrayBuffer())), romUrl);
     } catch (err) {

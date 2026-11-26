@@ -145,7 +145,7 @@ $(WASM_JS): $(SRC) $(WASM_DIR)/main.c $(WASM_DIR)/library.js $(INCLUDE_DIR)/vm.h
 		-sENVIRONMENT=web,worker,node -sALLOW_MEMORY_GROWTH=1 \
 		-sSTACK_SIZE=65536 \
 		-sEXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPU8"]' \
-		-sEXPORTED_FUNCTIONS='["_vmw_init","_vmw_load","_vmw_run","_vmw_step","_vmw_status","_vmw_ticks","_vmw_ip","_vmw_sp","_vmw_push_key","_vmw_request_quit","_vmw_console_input","_vmw_set_debug"]' \
+		-sEXPORTED_FUNCTIONS='["_vmw_init","_vmw_load","_vmw_run","_vmw_step","_vmw_status","_vmw_ticks","_vmw_ip","_vmw_sp","_vmw_peek8","_vmw_push_key","_vmw_request_quit","_vmw_console_input","_vmw_set_debug"]' \
 		-o $@
 
 $(WASM_APP): $(WASM_DIR)/app.js | $(BUILD_DIR)
@@ -311,10 +311,10 @@ endif
 .PHONY: wasm-check
 ifeq ($(EMCC_FOUND),yes)
 ifeq ($(NODE_FOUND),yes)
-wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) ## Smoke-run Snake and conformance in the browser host under Node
+wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) ## Smoke-run Snake, conformance and typography in the browser host under Node
 	@echo "[RUN] WASM Snake smoke check"
 	@$(NODE) tests/wasm-smoke.mjs $(WASM_JS) $(SNAKE_SMOKE_ROM) \
-		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED)
+		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED) $(TYPOGRAPHY_ROM)
 else
 wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM)
 	@echo "[WARN] node not found; skipping WASM Snake smoke check"

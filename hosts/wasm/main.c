@@ -376,6 +376,11 @@ EMSCRIPTEN_KEEPALIVE int vmw_sp(void)
     return (int)g_vm.sp;
 }
 
+EMSCRIPTEN_KEEPALIVE int vmw_peek8(int addr)
+{
+    return (int)g_vm.mem[(uint16_t)addr];
+}
+
 EMSCRIPTEN_KEEPALIVE void vmw_push_key(int code)
 {
     if (!g_ready || code == 0 || g_web.key_len >= WEB_KEY_CAP) return;

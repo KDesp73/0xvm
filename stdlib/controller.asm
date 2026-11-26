@@ -1,6 +1,6 @@
 ; Controller device conveniences (host-provided).
 ; Key codes: 0 = none, 1..4 = up/down/left/right, 5 = space,
-; 6 = enter, 7 = escape, 32..126 = printable ASCII.
+; 6 = enter, 7 = escape, 8 = backspace, 9 = delete, 32..126 = printable ASCII.
 
 INCLUDE "ports.asm"
 

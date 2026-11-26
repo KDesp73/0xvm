@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const [jsPath, romPath, conformanceRom, expectedPath] = process.argv.slice(2);
+const [jsPath, romPath, conformanceRom, expectedPath, typographyRom] = process.argv.slice(2);
 if (!jsPath || !romPath) {
-  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED]');
+  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM]]');
   process.exit(2);
 }
 
@@ -94,4 +94,46 @@ if (conformanceRom) {
     process.exit(1);
   }
   console.log('wasm console conformance: VM_HALTED');
+}
+
+if (typographyRom) {
+  output.length = 0;
+  if (api.init(320, 240) !== 0) fail('typography init failed');
+  const typography = Array.from(readFileSync(typographyRom));
+  status = api.load(typography, typography.length);
+  if (status !== 0) fail(`typography vmw_load returned ${status}`);
+
+  const pushKey = mod.cwrap('vmw_push_key', null, ['number']);
+  const peek8 = mod.cwrap('vmw_peek8', 'number', ['number']);
+  const rd32 = (addr) => ((peek8(addr) << 24) | (peek8(addr + 1) << 16) |
+                          (peek8(addr + 2) << 8) | peek8(addr + 3)) | 0;
+  const frames = () => rd32(32);
+  const waitFrame = () => {
+    const before = frames();
+    for (let i = 0; i < 100 && frames() === before && status === 0; i++) {
+      status = api.run(10000);
+    }
+    if (status !== 0) fail(`typography stopped: ${STATUS[status] || status}`);
+  };
+  const press = (key) => { pushKey(key); waitFrame(); };
+  const text = () => {
+    const len = rd32(20), addr = rd32(16);
+    let s = '';
+    for (let i = 0; i < len && i < 32; i++) s += String.fromCharCode(peek8(addr + i));
+    return s;
+  };
+
+  waitFrame(); // startup draws the initial frame
+  press(65); press(66); press(67);          // ABC
+  if (text() !== 'ABC') fail(`typography insert: got "${text()}"`);
+  press(3); press(3);                       // caret between B and C
+  if (rd32(24) !== 1) fail(`typography caret: got ${rd32(24)}`);
+  press(8);                                 // backspace removes A
+  if (text() !== 'BC') fail(`typography backspace: got "${text()}"`);
+  press(88); press(89);                     // XY at the caret -> XYBC
+  press(9);                                 // delete removes B
+  if (text() !== 'XYC') fail(`typography delete: got "${text()}"`);
+  if (rd32(24) !== 2) fail(`typography caret after delete: got ${rd32(24)}`);
+
+  console.log('wasm typography editing: OK');
 }
