@@ -670,12 +670,12 @@ delete_at:
     LOCAL_SET 0
     LOCAL_GET 0
     PUSH 0
-    CMP_LT
+    CMP_GE
     JMP_Z da_bad
     LOCAL_GET 0
     PUSH G_LEN
     LOAD32
-    CMP_GE
+    CMP_LT
     JMP_Z da_bad
     LOCAL_GET 0
     LOCAL_SET 1
@@ -685,7 +685,7 @@ da_shift_loop:
     LOAD32
     PUSH 1
     SUB
-    CMP_GE
+    CMP_LT
     JMP_Z da_shift_done
 da_shift_do:
     PUSH G_TEXT
@@ -1144,6 +1144,7 @@ not_right:
     PUSH NEWLINE
     CALL insert_byte
     POP
+    POP
     JMP key_done_popless
 not_enter:
     DUP
@@ -1156,9 +1157,8 @@ not_enter:
     DEC
     DUP
     PUSH 0
-    CMP_LT
+    CMP_GE
     JMP_Z bs_bad
-    DUP
     CALL delete_at
     POP
     PUSH G_CARET
@@ -1177,6 +1177,7 @@ not_backspace:
     LOAD32
     CALL delete_at
     POP
+    POP
     JMP key_done_popless
 not_delete:
     DUP
@@ -1186,6 +1187,7 @@ not_delete:
     POP
     PUSH FONT_FIRST
     CALL insert_byte
+    POP
     POP
     JMP key_done_popless
 not_space:
@@ -1198,6 +1200,7 @@ not_space:
     CMP_LE
     JMP_Z key_drop
     CALL insert_byte
+    POP
     POP
     JMP key_done_popless
 key_done:

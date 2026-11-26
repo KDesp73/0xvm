@@ -15,5 +15,7 @@ int test_conformance(void);
 int test_dis(void);
 /* Runs the shared host-device test cases and returns the number of failed checks. */
 int test_host(void);
+/* Runs the typography demo editing checks and returns the number of failed checks. */
+int test_typography(void);
 
 #endif /* TESTS_H */
