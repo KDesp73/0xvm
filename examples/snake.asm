@@ -2,11 +2,13 @@
 ; =============================================================================
 ; Snake — the 0xvm flagship app for the SDL3 and browser hosts.
 ;
-; Arrows steer, escape quits. The snake wraps at the edges, eats the red food,
-; and grows. Body cells live in an arena-backed vector, food positions come
-; from the deterministic RNG, and the score is an explicit-length string that
-; is printed on the shared Console device. Screen, Controller, and timer ports
-; are optional: the core 0xvm host does not provide them.
+; Arrows steer, escape quits. The snake wraps at the edges, eats the dithered
+; accent food, and grows. Body cells live in an arena-backed vector, food
+; positions come from the deterministic RNG, and the score is an explicit-length
+; string printed on both the inverted header strip and the Console device.
+; Drawing follows the house style: Deep Ink palette, 8px grid, inverted header,
+; and hairline frame. Screen, Controller, and timer ports are optional: the core
+; 0xvm host does not provide them.
 ;
 ; Run with: ./build/0xvm-sdl -f examples/snake.asm [-W 320] [-H 240]
 ;       or: make wasm && serve build/ and open 0xvm-wasm.html
@@ -16,8 +18,14 @@ INCLUDE "all.asm"
 
 ; ------------------------------------------------------------------ constants
 
+; House grid: 8x8 cells with a 1px inset for crisp, evenly spaced sprites.
 EQU CELL        8
-EQU SPRITE      6
+EQU TILE        8
+EQU INSET       1
+EQU SPRITE      CELL-2*INSET
+EQU GRID_X      TILE        ; board fills the hairline box horizontally
+EQU GRID_Y      TILE*2      ; board starts at the box top
+EQU GRID_MARGIN TILE*3      ; box top + bottom border
 EQU FRAME_MS    80          ; ~12.5 updates/second
 EQU MAX_MOVES   0           ; 0 = unlimited; smoke builds override this
 EQU MAX_SCORE   20          ; win after 20 apples
@@ -30,10 +38,22 @@ EQU KEY_LEFT    3
 EQU KEY_RIGHT   4
 EQU KEY_ESC     7
 
-EQU C_BG        0x101010
-EQU C_BODY      0x00C020
-EQU C_HEAD      0xE0FFE0
-EQU C_FOOD      0xFF5040
+; Deep Ink house palette: canvas, ink, structure, accent.
+EQU C_CANVAS    0x060907
+EQU C_INK       0xF2F6F0
+EQU C_STRUCT    0x2A352C
+EQU C_ACCENT    0xB9E5AD
+
+; Shared bitmap font geometry (same values as examples/typography).
+EQU SCALE       1
+EQU GLYPH_W     5
+EQU CELL_W      8
+EQU CELL_H      8
+EQU PIXEL_W     CELL_W*SCALE
+EQU PIXEL_H     CELL_H*SCALE
+EQU FONT_FIRST  32
+EQU FONT_LAST   126
+EQU NEWLINE     10
 
 ; Zero-page globals (absolute byte addresses).
 EQU G_PW        0           ; framebuffer width in pixels
@@ -52,7 +72,7 @@ EQU G_SCORE     48
 EQU G_LEN       52
 EQU G_LAST      56          ; timestamp of the last frame
 EQU G_MOVES     60
-EQU G_STATE     64          ; 0 = running, 1 = quit requested
+EQU G_STATE     64          ; 0=running 1=quit 2=game over 3=complete
 EQU G_SEED      68
 EQU G_NX        72          ; candidate head x
 EQU G_NY        76          ; candidate head y
@@ -64,7 +84,28 @@ EQU ARENA       96          ; 24-byte arena header
 EQU VEC         128         ; 32-byte vector header
 EQU SCORE_BUF   160         ; 8-byte explicit-length string
 
+; Names expected by the shared typography drawing modules.
+EQU G_W         G_PW
+EQU G_H         G_PH
+EQU G_COLS      G_GW
+; caret_xy is unused here; park its scratch cells past the score buffer.
+EQU G_TEXT      168
+EQU G_CX        172
+EQU G_CY        176
+
 ; ------------------------------------------------------------------ static data
+
+header_title:
+    STR "0XVM // SNAKE"
+    DB 0
+
+status_over:
+    STR "GAME OVER"
+    DB 0
+
+status_win:
+    STR "RUN COMPLETE"
+    DB 0
 
 intro:
     STR "SNAKE | arrows move | esc quits | score on console"
@@ -107,6 +148,14 @@ score_texts:
     STR "SCORE 20"
 
     JMP start
+
+; Shared house-font drawing routines; the data above and the game code below
+; are emitted after this jump.
+INCLUDE "typography/font.asm"
+INCLUDE "typography/macros.asm"
+INCLUDE "typography/glyphs.asm"
+INCLUDE "typography/lines.asm"
+INCLUDE "typography/layout.asm"
 
 ; ------------------------------------------------------------------ input
 ;
@@ -311,9 +360,57 @@ pf_ok:
 
 ; ------------------------------------------------------------------ drawing
 ;
+; Solid fill for the inverted 8px header strip.
+; [..., x, y, w, h, colour] -> [..., 0]
+
+fill_rect:
+    ENTER 8                     ; 0=x 1=y 2=w 3=h 4=colour 5=row
+    PUSH 12
+    PICK
+    LOCAL_SET 0
+    PUSH 11
+    PICK
+    LOCAL_SET 1
+    PUSH 10
+    PICK
+    LOCAL_SET 2
+    PUSH 9
+    PICK
+    LOCAL_SET 3
+    PUSH 8
+    PICK
+    LOCAL_SET 4
+    PUSH 0
+    LOCAL_SET 5
+fr_loop:
+    LOCAL_GET 5
+    LOCAL_GET 3
+    CMP_GE
+    JMP_Z fr_body
+    JMP fr_done
+fr_body:
+    LOCAL_GET 0
+    LOCAL_GET 1
+    LOCAL_GET 5
+    ADD
+    LOCAL_GET 2
+    LOCAL_GET 4
+    CALL hline
+    POP
+    POP
+    POP
+    POP
+    POP
+    LOCAL_GET 5
+    INC
+    LOCAL_SET 5
+    JMP fr_loop
+fr_done:
+    PUSH 0
+    RET
+
 ; [..., packed x/y, colour] -> [..., 0]
 ; Plot a filled SPRITE x SPRITE square with a one-pixel inset.
-
 draw_cell:
     ENTER 7                     ; 0=packed, 1=colour, 2=px, 3=py, 4=row, 5=col
     PUSH 8
@@ -327,7 +424,9 @@ draw_cell:
     SHR
     PUSH CELL
     MUL
-    PUSH 1
+    PUSH GRID_X
+    ADD
+    PUSH INSET
     ADD
     LOCAL_SET 2
     LOCAL_GET 0
@@ -335,7 +434,9 @@ draw_cell:
     AND
     PUSH CELL
     MUL
-    PUSH 1
+    PUSH GRID_Y
+    ADD
+    PUSH INSET
     ADD
     LOCAL_SET 3
     LOCAL_GET 1
@@ -360,12 +461,7 @@ dc_col:
     LOCAL_GET 3
     LOCAL_GET 4
     ADD
-    SWAP
-    PUSH 16
-    SHL
-    SWAP
-    OR
-    PLOT
+    PLOT_STACK
     LOCAL_GET 5
     INC
     LOCAL_SET 5
@@ -379,10 +475,254 @@ dc_done:
     PUSH 0
     RET
 
+; [..., packed x/y] -> [..., 0]
+; The target is a dithered accent square so it reads apart from the solid head.
+draw_food:
+    ENTER 6                     ; 0=packed 1=px 2=py 3=row 4=col 5=parity
+    PUSH 6
+    PICK
+    LOCAL_SET 0
+    LOCAL_GET 0
+    PUSH 16
+    SHR
+    PUSH CELL
+    MUL
+    PUSH GRID_X
+    ADD
+    PUSH INSET
+    ADD
+    LOCAL_SET 1
+    LOCAL_GET 0
+    PUSH 0xFFFF
+    AND
+    PUSH CELL
+    MUL
+    PUSH GRID_Y
+    ADD
+    PUSH INSET
+    ADD
+    LOCAL_SET 2
+    PUSH 0
+    LOCAL_SET 3
+dfd_row:
+    LOCAL_GET 3
+    PUSH SPRITE
+    CMP_LT
+    JMP_Z dfd_done
+    PUSH 0
+    LOCAL_SET 4
+dfd_col:
+    LOCAL_GET 4
+    PUSH SPRITE
+    CMP_LT
+    JMP_Z dfd_next_row
+    LOCAL_GET 3
+    LOCAL_GET 4
+    ADD
+    PUSH 1
+    AND
+    LOCAL_SET 5
+    LOCAL_GET 5
+    JMP_Z dfd_canvas
+    PUSH C_ACCENT
+    SET_COLOR
+    JMP dfd_plot
+dfd_canvas:
+    PUSH C_CANVAS
+    SET_COLOR
+dfd_plot:
+    LOCAL_GET 1
+    LOCAL_GET 4
+    ADD
+    LOCAL_GET 2
+    LOCAL_GET 3
+    ADD
+    PLOT_STACK
+    LOCAL_GET 4
+    INC
+    LOCAL_SET 4
+    JMP dfd_col
+dfd_next_row:
+    LOCAL_GET 3
+    INC
+    LOCAL_SET 3
+    JMP dfd_row
+dfd_done:
+    PUSH 0
+    RET
+
+; [...] -> [..., 0]
+; Bottom status row; controls live in the intro only. The accent is reserved
+; for the terminal modes, so the playing field stays free of text.
+draw_status_line:
+    PUSH G_STATE
+    LOAD32
+    PUSH 2
+    CMP_LT
+    JMP_Z dsl_visible
+    PUSH 0
+    RET
+dsl_visible:
+    PUSH G_STATE
+    LOAD32
+    PUSH 2
+    CMP_EQ
+    JMP_Z dsl_win
+    PUSH status_over
+    JMP dsl_have_text
+dsl_win:
+    PUSH status_win
+dsl_have_text:
+    DUP
+    STRLENZ
+    PUSH GRID_X
+    PUSH G_H
+    LOAD32
+    PUSH TILE*2
+    SUB
+    PUSH G_COLS
+    LOAD32
+    PUSH 1
+    PUSH C_ACCENT
+    CALL draw_text
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+    PUSH 0
+    RET
+
 draw_frame:
-    PUSH C_BG
+    PUSH C_CANVAS
     SET_COLOR
     CLEAR
+
+    ; Inverted header strip: title left, live score right.
+    PUSH 0
+    PUSH 0
+    PUSH G_W
+    LOAD32
+    PUSH TILE
+    PUSH C_INK
+    CALL fill_rect
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+
+    PUSH header_title
+    DUP
+    STRLENZ
+    PUSH TILE
+    PUSH 0
+    PUSH G_COLS
+    LOAD32
+    PUSH 1
+    PUSH C_CANVAS
+    CALL draw_text
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+
+    PUSH G_W
+    LOAD32
+    PUSH 8                      ; "SCORE 00" is eight cells wide
+    PUSH PIXEL_W
+    MUL
+    SUB
+    PUSH TILE
+    SUB
+    PUSH SCORE_BUF
+    PUSH 8
+    ROT
+    PUSH 0
+    PUSH 8
+    PUSH 1
+    PUSH C_CANVAS
+    CALL draw_text
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+    POP
+
+    ; Hairline content box.
+    PUSH TILE
+    PUSH TILE*2
+    PUSH G_W
+    LOAD32
+    PUSH TILE*2
+    SUB
+    PUSH C_STRUCT
+    CALL hline
+    POP
+    POP
+    POP
+    POP
+    POP
+
+    PUSH TILE
+    PUSH G_H
+    LOAD32
+    PUSH TILE
+    SUB
+    PUSH G_W
+    LOAD32
+    PUSH TILE*2
+    SUB
+    PUSH C_STRUCT
+    CALL hline
+    POP
+    POP
+    POP
+    POP
+    POP
+
+    PUSH TILE
+    PUSH TILE*2+1
+    PUSH G_H
+    LOAD32
+    PUSH TILE*3+1
+    SUB
+    PUSH C_STRUCT
+    CALL vline
+    POP
+    POP
+    POP
+    POP
+    POP
+
+    PUSH G_W
+    LOAD32
+    PUSH TILE+1
+    SUB
+    PUSH TILE*2+1
+    PUSH G_H
+    LOAD32
+    PUSH TILE*3+1
+    SUB
+    PUSH C_STRUCT
+    CALL vline
+    POP
+    POP
+    POP
+    POP
+    POP
+
     PUSH G_FX
     LOAD32
     PUSH G_FY
@@ -392,11 +732,10 @@ draw_frame:
     SHL
     SWAP
     OR
-    PUSH C_FOOD
-    CALL draw_cell
+    CALL draw_food
     POP
     POP
-    POP
+
     PUSH G_LEN
     LOAD32
     DEC
@@ -412,7 +751,7 @@ df_body:
     PUSH G_I
     LOAD32
     VEC_GET64
-    PUSH C_BODY
+    PUSH C_INK
     CALL draw_cell
     POP
     POP
@@ -433,11 +772,15 @@ df_body_done:
     SHL
     SWAP
     OR
-    PUSH C_HEAD
+    PUSH C_ACCENT
     CALL draw_cell
     POP
     POP
     POP
+
+    CALL draw_status_line
+    POP
+
     DRAW
     PUSH 0
     RET
@@ -457,12 +800,16 @@ start:
     STORE32
     PUSH G_PW
     LOAD32
+    PUSH GRID_X*2
+    SUB
     PUSH CELL
     DIV
     PUSH G_GW
     STORE32
     PUSH G_PH
     LOAD32
+    PUSH GRID_MARGIN
+    SUB
     PUSH CELL
     DIV
     PUSH G_GH
@@ -782,6 +1129,11 @@ render:
     JMP main_loop
 
 game_over:
+    PUSH 2
+    PUSH G_STATE
+    STORE32
+    CALL draw_frame
+    POP
     PUSH over_text
     DUP
     STRLENZ
@@ -789,6 +1141,11 @@ game_over:
     HALT
 
 complete:
+    PUSH 3
+    PUSH G_STATE
+    STORE32
+    CALL draw_frame
+    POP
     PUSH complete_text
     DUP
     STRLENZ

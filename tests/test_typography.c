@@ -27,11 +27,12 @@ enum {
     G_FRAMES = 32
 };
 
-#define CARET_COLOR 0xFFC040u
-#define TEXT_X      3           /* BORDER + 1 */
-#define TEXT_Y      21          /* BAR_H + 1 */
-#define CELL_W_PX   12          /* (5 + 1) * SCALE */
-#define CELL_H_PX   16          /* 8 * SCALE */
+#define CARET_COLOR 0xB9E5ADu   /* house accent: focus/cursor */
+#define TEXT_X      16          /* one tile inside the hairline box */
+#define TEXT_Y      24          /* below the 8px header and box top */
+#define CELL_W_PX   8           /* 8x8 house cell */
+#define CELL_H_PX   8
+#define GLYPH_W_PX  5           /* 5px glyph plus a 3px caret gutter */
 #define MAX_CARET_PIXELS 4096
 
 typedef struct {
@@ -76,6 +77,8 @@ static VmStatus typo_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
     } else if (port == VM_SCREEN_COLOR) {
         t->color = (uint32_t)(uint64_t)value;
     } else if (port == VM_SCREEN_PIXEL && t->color == CARET_COLOR &&
+               ((uint64_t)value & 0xFFFFu) >= TEXT_Y &&
+               ((uint64_t)value & 0xFFFFu) < TEXT_Y + CELL_H_PX &&
                t->caret_count < MAX_CARET_PIXELS) {
         uint64_t packed = (uint64_t)value;
         t->carets[t->caret_count].x = (uint16_t)((packed >> 16u) & 0xFFFFu);
@@ -132,11 +135,12 @@ static void expect_text(Typo *t, const char *want, int32_t caret)
     CHECK(t->vm.sp == 0u);      /* edit keys must not leak stack arguments */
 }
 
-/* The caret must occupy the two-pixel gutter before its cell, not the
- * centre of the glyph drawn in that cell. */
+/* The caret must occupy the trailing gutter of its cell, not the centre of
+ * the glyph drawn in that cell. The first gutter pixel is the ink outline;
+ * the two accent pixels after it are tracked here. */
 static void expect_caret_column(Typo *t, int32_t column)
 {
-    uint16_t want_x = (uint16_t)(TEXT_X + column * CELL_W_PX - 2);
+    uint16_t want_x = (uint16_t)(TEXT_X + column * CELL_W_PX + GLYPH_W_PX + 1);
     bool left = false, right = false;
 
     CHECK(t->caret_count > 0u);

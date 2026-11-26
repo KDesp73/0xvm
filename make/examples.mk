@@ -50,13 +50,14 @@ else
 		exit 0
 endif
 
-$(SNAKE_ROM): examples/snake.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+$(SNAKE_ROM): examples/snake.asm $(TYPOGRAPHY_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
 	@echo "[INFO] Building Snake ROM"
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
 
-$(SNAKE_SMOKE_SRC): examples/snake.asm | $(BUILD_DIR)
+$(SNAKE_SMOKE_SRC): examples/snake.asm $(TYPOGRAPHY_SRC) | $(BUILD_DIR)
 	@sed -e 's/^EQU FRAME_MS    80/EQU FRAME_MS    1/' \
-	     -e 's/^EQU MAX_MOVES   0/EQU MAX_MOVES   12/' $< > $@
+	     -e 's/^EQU MAX_MOVES   0/EQU MAX_MOVES   12/' \
+	     -e 's|INCLUDE "typography/|INCLUDE "../examples/typography/|' $< > $@
 
 $(SNAKE_SMOKE_ROM): $(SNAKE_SMOKE_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
