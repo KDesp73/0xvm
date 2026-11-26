@@ -1,3 +1,4 @@
 TODO: Linters and formatters [Linter for both 0x asm and lua source files and formatter for the assembly]
 TODO: Showcase site [Create a single page showcase site for the project]
-PROG: Compiler [Lua-based python compiler]
+DONE: Compiler [Lua-based python compiler]
+TODO: CI/CD [github workflows for testing and building the project]
