@@ -44,6 +44,75 @@ class LuacTests(unittest.TestCase):
         with self.assertRaises(CompileError):
             compile_source('local s = "no"', 'bad.lua')
 
+    def test_lexer_recognizes_function_keywords(self):
+        tokens = tokenize('function f(x)\n return x\nend')
+        self.assertEqual([t.text for t in tokens],
+                         ['function', 'f', '(', 'x', ')', 'return', 'x',
+                          'end', '<eof>'])
+
+    def test_parser_accepts_functions_and_calls(self):
+        program = Parser.from_source(
+            'function f(a)\n return a\nend\nprint(f(1))'
+        ).parse_program()
+        function = program[0]
+        self.assertIsInstance(function, nodes.Function)
+        self.assertEqual(function.params, ['a'])
+        self.assertIsInstance(function.body[0], nodes.Return)
+        call = program[1].expr
+        self.assertIsInstance(call, nodes.Call)
+        self.assertEqual(call.name, 'f')
+
+    def test_codegen_emits_function_abi(self):
+        asm = compile_source(
+            'function add(a, b)\n return a + b\nend\nprint(add(1, 2))',
+            'fn.lua',
+        )
+        self.assertIn('__lua_fn_add:', asm)
+        self.assertIn('ENTER 2', asm)
+        self.assertIn('PUSH 3\n    PICK\n    LOCAL_SET 0', asm)
+        self.assertIn(
+            '    CALL __lua_fn_add\n'
+            '    SWAP\n    POP\n'
+            '    SWAP\n    POP\n'
+            '    PRINT',
+            asm,
+        )
+        self.assertIn('    RET\n', asm)
+
+    def test_statement_call_discards_result_and_arguments(self):
+        asm = compile_source(
+            'function f(a, b)\n return a\nend\nf(1, 2)',
+            'fn.lua',
+        )
+        self.assertIn(
+            '    CALL __lua_fn_f\n'
+            '    POP\n    POP\n    POP\n'
+            '    HALT',
+            asm,
+        )
+
+    def test_call_arity_is_checked(self):
+        with self.assertRaises(CompileError):
+            compile_source(
+                'function f(a)\n return a\nend\nprint(f(1, 2))',
+                'bad.lua',
+            )
+
+    def test_unknown_function_is_rejected(self):
+        with self.assertRaises(CompileError):
+            compile_source('print(nope(1))', 'bad.lua')
+
+    def test_return_outside_function_is_rejected(self):
+        with self.assertRaises(CompileError):
+            compile_source('return 1', 'bad.lua')
+
+    def test_nested_function_is_rejected(self):
+        with self.assertRaises(CompileError):
+            compile_source(
+                'function outer()\n function inner()\n  return 1\n end\n return 2\nend',
+                'bad.lua',
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

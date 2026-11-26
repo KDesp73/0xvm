@@ -1,7 +1,6 @@
 """Small AST nodes for the supported Lua subset."""
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -33,6 +32,12 @@ class Binary:
 
 
 @dataclass
+class Call:
+    name: str
+    args: list
+
+
+@dataclass
 class Local:
     name: str
     expr: object
@@ -47,6 +52,11 @@ class Assign:
 @dataclass
 class Print:
     expr: object
+
+
+@dataclass
+class Return:
+    expr: object | None = None
 
 
 @dataclass
@@ -68,4 +78,10 @@ class For:
     start: object
     limit: object
     body: list
-    limit_name: Optional[str] = None
+
+
+@dataclass
+class Function:
+    name: str
+    params: list
+    body: list

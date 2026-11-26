@@ -72,11 +72,10 @@ TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
 LUAC_MODULES    = $(wildcard luac/*.py)
 PYPROJECT       = pyproject.toml
 PIP            ?= pip3
-LUA_SMOKE_SRC   = $(TEST_DIR)/lua/smoke.lua
-LUA_SMOKE_ASM   = $(BUILD_DIR)/lua-smoke.asm
-LUA_SMOKE_ROM   = $(BUILD_DIR)/lua-smoke.rom
-LUA_SMOKE_OUT   = $(BUILD_DIR)/lua-smoke-actual.txt
-LUA_SMOKE_EXPECTED = $(TEST_DIR)/lua/smoke.expected
+LUA_CASES       = smoke functions
+LUA_SRCS        = $(foreach case,$(LUA_CASES),$(TEST_DIR)/lua/$(case).lua)
+LUA_ASMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).asm)
+LUA_ROMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).rom)
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
@@ -261,22 +260,24 @@ typography-check: $(TYPOGRAPHY_ROM) $(TYPOGRAPHY_SMOKE_ROM) $(SDL_HOST)
 		exit 0
 endif
 
-$(LUA_SMOKE_ASM): $(LUA_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
-	@echo "[INFO] Compiling Lua smoke source"
+$(BUILD_DIR)/lua-%.asm: $(TEST_DIR)/lua/%.lua $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua source $*"
 	@python3 -m luac compile $< -o $@
 
-$(LUA_SMOKE_ROM): $(LUA_SMOKE_ASM) $(BUILD_DIR)/0xasm
-	@echo "[INFO] Assembling Lua smoke output"
+$(BUILD_DIR)/lua-%.rom: $(BUILD_DIR)/lua-%.asm $(BUILD_DIR)/0xasm
+	@echo "[INFO] Assembling Lua output $*"
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
 
 .PHONY: lua-check
-lua-check: $(LUA_SMOKE_ROM) $(BUILD_DIR)/0xvm ## Compile and run the Lua subset smoke program
+lua-check: $(LUA_ROMS) $(BUILD_DIR)/0xvm ## Compile and run the Lua subset golden programs
 	@echo "[RUN] Lua compiler front-end unit checks"
 	@python3 $(TEST_DIR)/test_luac.py
-	@echo "[RUN] Lua compiler smoke check"
-	@./$(BUILD_DIR)/0xvm -f $(LUA_SMOKE_ROM) 2>/dev/null \
-		| sed '/^\[INFO\] /d' > $(LUA_SMOKE_OUT)
-	@diff -u $(LUA_SMOKE_EXPECTED) $(LUA_SMOKE_OUT)
+	@for case in $(LUA_CASES); do \
+		echo "[RUN] Lua $$case check"; \
+		./$(BUILD_DIR)/0xvm -f $(BUILD_DIR)/lua-$$case.rom 2>/dev/null \
+			| sed '/^\[INFO\] /d' > $(BUILD_DIR)/lua-$$case-actual.txt; \
+		diff -u $(TEST_DIR)/lua/$$case.expected $(BUILD_DIR)/lua-$$case-actual.txt || exit 1; \
+	done
 
 .PHONY: luac-install
 luac-install: ## Install the 0xluac CLI in editable mode

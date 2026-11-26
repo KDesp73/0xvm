@@ -28,50 +28,55 @@ def asm_escape(value: str) -> str:
     return ''.join(out)
 
 
+class Scope:
+    """Local slots for one function frame."""
+
+    def __init__(self):
+        self.names: dict[str, int] = {}
+        self.hidden_count = 0
+        self.for_limits: dict[int, str] = {}
+
+    def declare(self, name: str) -> int:
+        if name not in self.names:
+            self.names[name] = len(self.names)
+        return self.names[name]
+
+    def index(self, name: str) -> int:
+        if name not in self.names:
+            raise CompileError(f'unknown local {name!r}')
+        return self.names[name]
+
+    def hidden(self, prefix: str) -> str:
+        self.hidden_count += 1
+        name = f'__{prefix}_{self.hidden_count}'
+        self.declare(name)
+        return name
+
+    @property
+    def size(self) -> int:
+        return len(self.names)
+
+
 class Codegen:
     def __init__(self, program: list, source_name: str):
         self.program = program
         self.source_name = source_name
         self.lines: list[str] = []
-        self.locals: dict[str, int] = {}
         self.strings: dict[str, tuple[str, int]] = {}
         self.label_count = 0
+        self.scope = Scope()
+        self.in_function = False
+        self.functions: dict[str, int] = {}
 
         for statement in program:
-            self.collect_locals(statement)
-
-    def collect_locals(self, statement) -> None:
-        if isinstance(statement, nodes.Local):
-            self.declare(statement.name)
-            return
-        if isinstance(statement, nodes.For):
-            self.declare(statement.name)
-            statement.limit_name = f'__for_limit_{len(self.locals)}'
-            self.declare(statement.limit_name)
-        for child in self.children(statement):
-            if isinstance(child, list):
-                for item in child:
-                    self.collect_locals(item)
-            else:
-                self.collect_locals(child)
+            if isinstance(statement, nodes.Function):
+                if statement.name in self.functions:
+                    raise CompileError(f'duplicate function {statement.name!r}')
+                self.functions[statement.name] = len(statement.params)
 
     @staticmethod
-    def children(statement) -> list:
-        if isinstance(statement, nodes.If):
-            return [statement.then_body, statement.else_body]
-        if isinstance(statement, (nodes.While, nodes.For)):
-            return [statement.body]
-        return []
-
-    def declare(self, name: str) -> int:
-        if name not in self.locals:
-            self.locals[name] = len(self.locals)
-        return self.locals[name]
-
-    def local_index(self, name: str) -> int:
-        if name not in self.locals:
-            raise CompileError(f'unknown local {name!r}')
-        return self.locals[name]
+    def function_label(name: str) -> str:
+        return f'__lua_fn_{name}'
 
     def label(self, prefix: str) -> str:
         self.label_count += 1
@@ -89,6 +94,21 @@ class Codegen:
             self.strings[value] = (label, len(value))
         return self.strings[value][0]
 
+    def collect(self, statements: list, scope: Scope) -> None:
+        for statement in statements:
+            if isinstance(statement, nodes.Local):
+                scope.declare(statement.name)
+            elif isinstance(statement, nodes.For):
+                scope.declare(statement.name)
+                scope.for_limits[id(statement)] = scope.hidden('for_limit')
+            elif isinstance(statement, nodes.If):
+                self.collect(statement.then_body, scope)
+                self.collect(statement.else_body, scope)
+            elif isinstance(statement, nodes.While):
+                self.collect(statement.body, scope)
+            elif isinstance(statement, nodes.Function):
+                raise CompileError('nested functions are not supported')
+
     def require_numeric(self, expr) -> None:
         if isinstance(expr, nodes.Str):
             raise CompileError('strings are only supported as print arguments')
@@ -98,12 +118,37 @@ class Codegen:
             self.require_numeric(expr.left)
             self.require_numeric(expr.right)
 
+    def emit_call(self, call: nodes.Call, keep_result: bool) -> None:
+        argc = self.functions.get(call.name)
+        if argc is None:
+            raise CompileError(f'unknown function {call.name!r}')
+        if len(call.args) != argc:
+            raise CompileError(
+                f'function {call.name!r} expects {argc} argument(s), got {len(call.args)}'
+            )
+
+        for arg in call.args:
+            self.emit_num(arg)
+        self.emit_instr(f'CALL {self.function_label(call.name)}')
+
+        if keep_result:
+            # After RET the stack holds [args..., result]. Remove the arguments
+            # while keeping the result on top.
+            for _ in range(argc):
+                self.emit_instr('SWAP')
+                self.emit_instr('POP')
+        else:
+            for _ in range(argc + 1):
+                self.emit_instr('POP')
+
     def emit_num(self, expr) -> None:
         self.require_numeric(expr)
         if isinstance(expr, nodes.Int):
             self.emit_instr(f'PUSH {expr.value}')
         elif isinstance(expr, nodes.Var):
-            self.emit_instr(f'LOCAL_GET {self.local_index(expr.name)}')
+            self.emit_instr(f'LOCAL_GET {self.scope.index(expr.name)}')
+        elif isinstance(expr, nodes.Call):
+            self.emit_call(expr, keep_result=True)
         elif isinstance(expr, nodes.Unary):
             self.emit_instr('PUSH 0')
             self.emit_num(expr.operand)
@@ -119,9 +164,22 @@ class Codegen:
             raise CompileError(f'unsupported expression {type(expr).__name__}')
 
     def emit_statement(self, statement) -> None:
+        if isinstance(statement, nodes.Function):
+            raise CompileError('nested functions are not supported')
+
+        if isinstance(statement, nodes.Return):
+            if not self.in_function:
+                raise CompileError('return outside function')
+            if statement.expr is None:
+                self.emit_instr('PUSH 0')
+            else:
+                self.emit_num(statement.expr)
+            self.emit_instr('RET')
+            return
+
         if isinstance(statement, (nodes.Local, nodes.Assign)):
             self.emit_num(statement.expr)
-            self.emit_instr(f'LOCAL_SET {self.local_index(statement.name)}')
+            self.emit_instr(f'LOCAL_SET {self.scope.index(statement.name)}')
             return
 
         if isinstance(statement, nodes.Print):
@@ -134,6 +192,10 @@ class Codegen:
             else:
                 self.emit_num(statement.expr)
                 self.emit_instr('PRINT')
+            return
+
+        if isinstance(statement, nodes.Call):
+            self.emit_call(statement, keep_result=False)
             return
 
         if isinstance(statement, nodes.If):
@@ -163,9 +225,9 @@ class Codegen:
             return
 
         if isinstance(statement, nodes.For):
-            assert statement.limit_name is not None
-            var = self.local_index(statement.name)
-            limit = self.local_index(statement.limit_name)
+            limit_name = self.scope.for_limits[id(statement)]
+            var = self.scope.index(statement.name)
+            limit = self.scope.index(limit_name)
             cond_label = self.label('for')
             end_label = self.label('endfor')
             self.emit_num(statement.start)
@@ -189,14 +251,50 @@ class Codegen:
 
         raise CompileError(f'unsupported statement {type(statement).__name__}')
 
+    def emit_function(self, function: nodes.Function) -> None:
+        scope = Scope()
+        for param in function.params:
+            scope.declare(param)
+        self.collect(function.body, scope)
+
+        self.emit()
+        self.emit(f'{self.function_label(function.name)}:')
+        self.scope = scope
+        self.in_function = True
+        self.emit_instr(f'ENTER {scope.size}')
+        for index, param in enumerate(function.params):
+            self.emit_instr(f'PUSH {scope.size + len(function.params) - index - 1}')
+            self.emit_instr('PICK')
+            self.emit_instr(f'LOCAL_SET {index}')
+
+        for statement in function.body:
+            self.emit_statement(statement)
+
+        self.emit_instr('PUSH 0')
+        self.emit_instr('RET')
+        self.in_function = False
+
     def generate(self) -> str:
         self.emit(f'; Generated by luac from {self.source_name}')
         self.emit('INCLUDE "console.asm"')
         self.emit()
-        self.emit_instr(f'ENTER {len(self.locals)}')
-        for statement in self.program:
+
+        top_statements = [
+            statement for statement in self.program
+            if not isinstance(statement, nodes.Function)
+        ]
+        main_scope = Scope()
+        self.collect(top_statements, main_scope)
+        self.scope = main_scope
+        self.in_function = False
+        self.emit_instr(f'ENTER {main_scope.size}')
+        for statement in top_statements:
             self.emit_statement(statement)
         self.emit_instr('HALT')
+
+        for statement in self.program:
+            if isinstance(statement, nodes.Function):
+                self.emit_function(statement)
 
         if self.strings:
             self.emit()

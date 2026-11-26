@@ -52,6 +52,15 @@ class Parser:
             statements.append(self.parse_statement())
         return statements
 
+    def parse_args(self) -> list:
+        args = []
+        if not self.at('OP', ')'):
+            args.append(self.parse_expr())
+            while self.accept('OP', ','):
+                args.append(self.parse_expr())
+        self.expect('OP', ')')
+        return args
+
     def parse_statement(self):
         if self.accept('KEYWORD', 'local'):
             name = self.expect('IDENT').text
@@ -96,8 +105,29 @@ class Parser:
             self.expect('KEYWORD', 'end')
             return nodes.For(name, start, limit, body)
 
+        if self.accept('KEYWORD', 'function'):
+            name = self.expect('IDENT').text
+            self.expect('OP', '(')
+            params = []
+            if not self.at('OP', ')'):
+                params.append(self.expect('IDENT').text)
+                while self.accept('OP', ','):
+                    params.append(self.expect('IDENT').text)
+            self.expect('OP', ')')
+            body = self.parse_block('end')
+            self.expect('KEYWORD', 'end')
+            return nodes.Function(name, params, body)
+
+        if self.accept('KEYWORD', 'return'):
+            if (self.at('KEYWORD', 'end') or self.at('KEYWORD', 'else') or
+                    self.at('EOF')):
+                return nodes.Return()
+            return nodes.Return(self.parse_expr())
+
         if self.at('IDENT'):
             name = self.advance().text
+            if self.accept('OP', '('):
+                return nodes.Call(name, self.parse_args())
             self.expect('OP', '=')
             return nodes.Assign(name, self.parse_expr())
 
@@ -141,6 +171,8 @@ class Parser:
         if self.accept('STRING'):
             return nodes.Str(token.value)
         if self.accept('IDENT'):
+            if self.accept('OP', '('):
+                return nodes.Call(token.text, self.parse_args())
             return nodes.Var(token.text)
         if self.accept('OP', '('):
             node = self.parse_expr()
