@@ -72,10 +72,12 @@ TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
 LUAC_MODULES    = $(wildcard luac/*.py)
 PYPROJECT       = pyproject.toml
 PIP            ?= pip3
-LUA_CASES       = smoke functions arrays heap bitops data
+LUA_CASES       = smoke functions arrays heap bitops data devices
 LUA_SRCS        = $(foreach case,$(LUA_CASES),$(TEST_DIR)/lua/$(case).lua)
 LUA_ASMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).asm)
 LUA_ROMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).rom)
+LUA_DEVICE_SMOKE_SRC = $(BUILD_DIR)/lua-devices-smoke.lua
+LUA_DEVICE_SMOKE_ROM = $(BUILD_DIR)/lua-devices-smoke.rom
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
@@ -268,6 +270,27 @@ $(BUILD_DIR)/lua-%.rom: $(BUILD_DIR)/lua-%.asm $(BUILD_DIR)/0xasm
 	@echo "[INFO] Assembling Lua output $*"
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
 
+$(LUA_DEVICE_SMOKE_SRC): $(TEST_DIR)/lua/devices.lua | $(BUILD_DIR)
+	@sed 's/^const ENABLE = 0$$/const ENABLE = 1/' $< > $@
+
+$(BUILD_DIR)/lua-devices-smoke.asm: $(LUA_DEVICE_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua device smoke source"
+	@python3 -m luac compile $< -o $@
+
+.PHONY: lua-device-check
+ifeq ($(SDL_HOST),)
+lua-device-check: $(LUA_DEVICE_SMOKE_ROM)
+	@echo "[RUN] Lua device intrinsic check (SDL3 not found)"
+else
+lua-device-check: $(LUA_DEVICE_SMOKE_ROM) $(SDL_HOST)
+	@echo "[RUN] Lua device intrinsic SDL smoke check (dummy video)"
+	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(LUA_DEVICE_SMOKE_ROM) -W 320 -H 240 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'DEVICE OK' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+endif
+
 .PHONY: lua-check
 lua-check: $(LUA_ROMS) $(BUILD_DIR)/0xvm ## Compile and run the Lua subset golden programs
 	@echo "[RUN] Lua compiler front-end unit checks"
@@ -304,6 +327,7 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@$(TEST_BIN)
 	@$(MAKE) --no-print-directory conformance-check
 	@$(MAKE) --no-print-directory lua-check
+	@$(MAKE) --no-print-directory lua-device-check
 	@$(MAKE) --no-print-directory debugger-check
 	@$(MAKE) --no-print-directory snake-check
 	@$(MAKE) --no-print-directory typography-check
@@ -366,10 +390,11 @@ endif
 .PHONY: wasm-check
 ifeq ($(EMCC_FOUND),yes)
 ifeq ($(NODE_FOUND),yes)
-wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) ## Smoke-run Snake, conformance and typography in the browser host under Node
+wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) $(LUA_DEVICE_SMOKE_ROM) ## Smoke-run Snake, conformance, typography, and Lua devices in the browser host under Node
 	@echo "[RUN] WASM Snake smoke check"
 	@$(NODE) tests/wasm-smoke.mjs $(WASM_JS) $(SNAKE_SMOKE_ROM) \
-		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED) $(TYPOGRAPHY_ROM)
+		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED) $(TYPOGRAPHY_ROM) \
+		$(LUA_DEVICE_SMOKE_ROM)
 else
 wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM)
 	@echo "[WARN] node not found; skipping WASM Snake smoke check"

@@ -296,6 +296,66 @@ class LuacTests(unittest.TestCase):
                 'bad.lua',
             )
 
+    def test_parser_accepts_multi_local_screen_size(self):
+        program = Parser.from_source('local w, h = screen_size()').parse_program()
+        self.assertIsInstance(program[0], nodes.LocalMulti)
+        self.assertEqual(program[0].names, ['w', 'h'])
+        self.assertEqual(program[0].expr.name, 'screen_size')
+
+    def test_codegen_emits_device_intrinsics(self):
+        asm = compile_source(
+            'local w, h = screen_size()\n'
+            'set_color(0xFFC040)\n'
+            'plot(1, 2)\n'
+            'draw()\n'
+            'clear()\n'
+            'print(read_key())\n'
+            'print(quit_requested())\n'
+            'print(now_ms())\n'
+            'sleep(20)',
+            'devices.lua',
+        )
+        for include in ('screen.asm', 'controller.asm', 'timer.asm'):
+            self.assertIn(f'INCLUDE "{include}"', asm)
+        self.assertIn('    SCREEN_SIZE\n    LOCAL_SET 1\n    LOCAL_SET 0', asm)
+        self.assertIn('    PUSH 16760896\n    SET_COLOR', asm)
+        self.assertIn(
+            '    SWAP\n    PUSH 16\n    SHL\n    SWAP\n    OR\n    PLOT', asm
+        )
+        self.assertIn('    DRAW\n    CLEAR\n', asm)
+        self.assertIn('    READ_KEY\n    PRINT', asm)
+        self.assertIn('    QUIT_REQUESTED\n    PRINT', asm)
+        self.assertIn('    NOW_MS\n    PRINT', asm)
+        self.assertIn('    PUSH 20\n    DEO 0x41', asm)
+
+    def test_value_intrinsic_statement_discards_result(self):
+        asm = compile_source('read_key()', 'devices.lua')
+        self.assertIn('    READ_KEY\n    POP', asm)
+
+    def test_screen_size_requires_two_targets(self):
+        for source in ('local x = screen_size()', 'screen_size()'):
+            with self.subTest(source=source), self.assertRaises(CompileError):
+                compile_source(source, 'bad.lua')
+
+    def test_multi_local_only_supports_screen_size(self):
+        with self.assertRaises(CompileError):
+            compile_source('local a, b = now_ms()', 'bad.lua')
+
+    def test_intrinsic_arity_is_checked(self):
+        with self.assertRaises(CompileError):
+            compile_source('plot(1)', 'bad.lua')
+
+    def test_void_intrinsic_is_rejected_as_expression(self):
+        with self.assertRaises(CompileError):
+            compile_source('local x = clear()', 'bad.lua')
+
+    def test_intrinsic_cannot_be_redefined_as_function(self):
+        with self.assertRaises(CompileError):
+            compile_source(
+                'function draw()\n return 1\nend\nprint(draw())',
+                'bad.lua',
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

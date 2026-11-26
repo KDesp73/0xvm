@@ -117,8 +117,9 @@ supported subset covers integer literals, string literals passed to `print`,
 locals and assignment, arithmetic and comparisons, `if`/`else`, `while`,
 numeric `for` loops, functions with parameters/returns/recursion, static
 byte/word arrays with indexing, typed heap allocations with pointer offsets,
-bitwise operators with hex literals, and `const` values with initialized data
-tables. The roadmap for reaching a typography-level demo is in
+bitwise operators with hex literals, `const` values with initialized data
+tables, and device intrinsics for the screen, controller, timer, and host sleep
+port. The roadmap for reaching a typography-level demo is in
 [`docs/Compiler-Design.md`](docs/Compiler-Design.md).
 
 Run it directly from the repository without installing anything:
@@ -142,8 +143,8 @@ For a non-editable install, run `pip3 install .` instead, or use
 `make luac-install` for the editable form.
 
 Strings are static `(addr, length)` buffers; numbers, function results, and heap
-addresses are signed 64-bit cells. Tables, device I/O, and source-level line
-remapping are not implemented yet.
+addresses are signed 64-bit cells. Table values, string variables, modules, and
+source-level line remapping are not implemented yet.
 
 ## Performance baselines
 

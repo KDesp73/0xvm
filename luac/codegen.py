@@ -40,6 +40,31 @@ HEAP_CONSTRUCTORS = {
     'alloc_words': ('DW', 4),
 }
 
+INTRINSIC_ARITY = {
+    'screen_size': 0,
+    'set_color': 1,
+    'plot': 2,
+    'draw': 0,
+    'clear': 0,
+    'read_key': 0,
+    'quit_requested': 0,
+    'now_ms': 0,
+    'sleep': 1,
+}
+
+INTRINSIC_INCLUDE = {
+    'screen_size': 'screen.asm',
+    'set_color': 'screen.asm',
+    'plot': 'screen.asm',
+    'draw': 'screen.asm',
+    'clear': 'screen.asm',
+    'read_key': 'controller.asm',
+    'quit_requested': 'controller.asm',
+    'now_ms': 'timer.asm',
+}
+
+VALUE_INTRINSICS = {'read_key', 'quit_requested', 'now_ms'}
+
 
 def wrap64(value: int) -> int:
     """Match the VM's signed 64-bit arithmetic."""
@@ -114,6 +139,7 @@ class Codegen:
         self.constants: dict[str, int] = {}
         self.static_data: dict[str, tuple[str, str, int]] = {}
         self.data_items: list[tuple[str, str, list[int]]] = []
+        self.includes: set[str] = set()
         self.label_count = 0
         self.scope = Scope()
         self.in_function = False
@@ -121,6 +147,10 @@ class Codegen:
 
         for statement in program:
             if isinstance(statement, nodes.Function):
+                if statement.name in INTRINSIC_ARITY:
+                    raise CompileError(
+                        f'cannot redefine intrinsic {statement.name!r}'
+                    )
                 if statement.name in self.functions:
                     raise CompileError(f'duplicate function {statement.name!r}')
                 self.functions[statement.name] = len(statement.params)
@@ -138,6 +168,116 @@ class Codegen:
 
     def emit_instr(self, text: str) -> None:
         self.lines.append(f'    {text}')
+
+    def scan_expr(self, expr) -> None:
+        """Register stdlib includes needed by intrinsics in an expression."""
+        if isinstance(expr, nodes.Call):
+            include = INTRINSIC_INCLUDE.get(expr.name)
+            if include:
+                self.includes.add(include)
+            for arg in expr.args:
+                self.scan_expr(arg)
+        elif isinstance(expr, nodes.Unary):
+            self.scan_expr(expr.operand)
+        elif isinstance(expr, nodes.Binary):
+            self.scan_expr(expr.left)
+            self.scan_expr(expr.right)
+        elif isinstance(expr, nodes.Index):
+            self.scan_expr(expr.base)
+            self.scan_expr(expr.index)
+        elif isinstance(expr, nodes.Data):
+            for value in expr.values:
+                self.scan_expr(value)
+
+    def scan_statements(self, statements: list) -> None:
+        for statement in statements:
+            if isinstance(statement, (nodes.Local, nodes.LocalMulti,
+                                     nodes.Assign, nodes.Print, nodes.Return,
+                                     nodes.Const)):
+                if statement.expr is not None:
+                    self.scan_expr(statement.expr)
+            elif isinstance(statement, nodes.AssignIndex):
+                self.scan_expr(statement.target.base)
+                self.scan_expr(statement.target.index)
+                self.scan_expr(statement.expr)
+            elif isinstance(statement, nodes.Call):
+                self.scan_expr(statement)
+            elif isinstance(statement, nodes.If):
+                self.scan_expr(statement.cond)
+                self.scan_statements(statement.then_body)
+                self.scan_statements(statement.else_body)
+            elif isinstance(statement, nodes.While):
+                self.scan_expr(statement.cond)
+                self.scan_statements(statement.body)
+            elif isinstance(statement, nodes.For):
+                self.scan_expr(statement.start)
+                self.scan_expr(statement.limit)
+                self.scan_statements(statement.body)
+            elif isinstance(statement, nodes.Function):
+                self.scan_statements(statement.body)
+
+    def check_intrinsic(self, call: nodes.Call) -> None:
+        expected = INTRINSIC_ARITY.get(call.name)
+        if expected is None:
+            raise CompileError(f'not an intrinsic: {call.name!r}')
+        if len(call.args) != expected:
+            raise CompileError(
+                f'intrinsic {call.name!r} expects {expected} argument(s), '
+                f'got {len(call.args)}'
+            )
+
+    def emit_intrinsic_expr(self, call: nodes.Call) -> None:
+        self.check_intrinsic(call)
+        name = call.name
+        if name == 'read_key':
+            self.emit_instr('READ_KEY')
+        elif name == 'quit_requested':
+            self.emit_instr('QUIT_REQUESTED')
+        elif name == 'now_ms':
+            self.emit_instr('NOW_MS')
+        elif name == 'screen_size':
+            raise CompileError('screen_size requires two local targets')
+        else:
+            raise CompileError(f'{name} does not produce a value')
+
+    def emit_intrinsic_statement(self, call: nodes.Call) -> None:
+        self.check_intrinsic(call)
+        name = call.name
+        if name == 'set_color':
+            self.emit_num(call.args[0])
+            self.emit_instr('SET_COLOR')
+        elif name == 'plot':
+            self.emit_num(call.args[0])
+            self.emit_num(call.args[1])
+            self.emit_instr('SWAP')
+            self.emit_instr('PUSH 16')
+            self.emit_instr('SHL')
+            self.emit_instr('SWAP')
+            self.emit_instr('OR')
+            self.emit_instr('PLOT')
+        elif name == 'draw':
+            self.emit_instr('DRAW')
+        elif name == 'clear':
+            self.emit_instr('CLEAR')
+        elif name == 'sleep':
+            self.emit_num(call.args[0])
+            self.emit_instr('DEO 0x41')
+        elif name in VALUE_INTRINSICS:
+            self.emit_num(call)
+            self.emit_instr('POP')
+        else:
+            raise CompileError('screen_size requires two local targets')
+
+    def emit_screen_size(self, statement: nodes.LocalMulti) -> None:
+        expr = statement.expr
+        if not isinstance(expr, nodes.Call) or expr.name != 'screen_size':
+            raise CompileError(
+                'multiple local targets are only supported for screen_size()'
+            )
+        self.check_intrinsic(expr)
+        self.emit_instr('SCREEN_SIZE')
+        for name in reversed(statement.names):
+            self.emit_instr(f'LOCAL_SET {self.scope.index(name)}')
 
     def intern_string(self, value: str) -> str:
         if value not in self.strings:
@@ -346,6 +486,9 @@ class Codegen:
         for statement in statements:
             if isinstance(statement, nodes.Local):
                 scope.declare(statement.name)
+            elif isinstance(statement, nodes.LocalMulti):
+                for name in statement.names:
+                    scope.declare(name)
             elif isinstance(statement, nodes.For):
                 scope.declare(statement.name)
                 scope.for_limits[id(statement)] = scope.hidden('for_limit')
@@ -408,6 +551,8 @@ class Codegen:
                 self.emit_heap_alloc(expr)
             elif expr.name == 'free':
                 raise CompileError('free is a statement, not an expression')
+            elif expr.name in INTRINSIC_ARITY:
+                self.emit_intrinsic_expr(expr)
             else:
                 self.emit_call(expr, keep_result=True)
         elif isinstance(expr, nodes.Index):
@@ -448,6 +593,12 @@ class Codegen:
             else:
                 self.emit_num(statement.expr)
             self.emit_instr('RET')
+            return
+
+        if isinstance(statement, nodes.LocalMulti):
+            for name in statement.names:
+                self.ensure_mutable(name)
+            self.emit_screen_size(statement)
             return
 
         if isinstance(statement, nodes.Local):
@@ -506,6 +657,9 @@ class Codegen:
                 self.emit_num(pointer)
                 self.emit_instr('FREE')
                 del self.scope.arrays[pointer.name]
+                return
+            if statement.name in INTRINSIC_ARITY:
+                self.emit_intrinsic_statement(statement)
                 return
             self.emit_call(statement, keep_result=False)
             return
@@ -587,6 +741,7 @@ class Codegen:
         self.in_function = False
 
     def generate(self) -> str:
+        self.scan_statements(self.program)
         self.prepare_declarations([
             statement for statement in self.program
             if isinstance(statement, nodes.Const)
@@ -594,6 +749,9 @@ class Codegen:
 
         self.emit(f'; Generated by luac from {self.source_name}')
         self.emit('INCLUDE "console.asm"')
+        for include in ('screen.asm', 'controller.asm', 'timer.asm'):
+            if include in self.includes:
+                self.emit(f'INCLUDE "{include}"')
         if self.constants:
             self.emit()
             for name, value in self.constants.items():

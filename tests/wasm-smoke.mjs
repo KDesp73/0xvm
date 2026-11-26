@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const [jsPath, romPath, conformanceRom, expectedPath, typographyRom] = process.argv.slice(2);
+const [jsPath, romPath, conformanceRom, expectedPath, typographyRom, luaDeviceRom] = process.argv.slice(2);
 if (!jsPath || !romPath) {
-  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM]]');
+  console.error('usage: node tests/wasm-smoke.mjs WASM_JS ROM [CONFORMANCE_ROM EXPECTED [TYPOGRAPHY_ROM [LUA_DEVICE_ROM]]]');
   process.exit(2);
 }
 
@@ -146,4 +146,18 @@ if (typographyRom) {
   if (rd32(24) !== 2) fail(`typography caret after delete: got ${rd32(24)}`);
 
   console.log('wasm typography editing: OK');
+}
+
+if (luaDeviceRom) {
+  output.length = 0;
+  if (api.init(320, 240) !== 0) fail('Lua device init failed');
+  const lua = Array.from(readFileSync(luaDeviceRom));
+  status = api.load(lua, lua.length);
+  if (status !== 0) fail(`Lua device vmw_load returned ${status}`);
+  for (let i = 0; i < 100 && status === 0; i++) status = api.run(100000);
+
+  const text = output.join('');
+  if (!text.includes('DEVICE OK')) fail('missing Lua device output');
+  if (status !== 1) fail(`Lua device expected VM_HALTED, got ${STATUS[status] || status}`);
+  console.log('wasm Lua device intrinsics: OK');
 }

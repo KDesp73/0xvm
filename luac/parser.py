@@ -70,9 +70,14 @@ class Parser:
 
     def parse_statement(self):
         if self.accept('KEYWORD', 'local'):
-            name = self.expect('IDENT').text
+            names = [self.expect('IDENT').text]
+            while self.accept('OP', ','):
+                names.append(self.expect('IDENT').text)
             self.expect('OP', '=')
-            return nodes.Local(name, self.parse_expr())
+            expr = self.parse_expr()
+            if len(names) == 1:
+                return nodes.Local(names[0], expr)
+            return nodes.LocalMulti(names, expr)
 
         if self.accept('KEYWORD', 'const'):
             name = self.expect('IDENT').text

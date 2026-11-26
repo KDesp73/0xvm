@@ -62,6 +62,12 @@ class Local:
 
 
 @dataclass
+class LocalMulti:
+    names: list[str]
+    expr: object
+
+
+@dataclass
 class Assign:
     name: str
     expr: object

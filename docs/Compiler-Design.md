@@ -13,18 +13,20 @@ committed on its own before the next one starts.
 
 - Integer literals and signed 64-bit arithmetic: `+`, `-`, `*`, `/`, `%`, unary `-`.
 - Comparisons: `==`, `~=`, `<`, `<=`, `>`, `>=`.
-- Locals and assignment: `local x = expr`, `x = expr`.
+- Locals and assignment: `local x = expr`, `local w, h = screen_size()`,
+  `x = expr`.
 - Control flow: `if`/`else`, `while`, numeric `for` with an implicit step of `1`.
 - Functions with parameters, locals, `return`, forward calls, and recursion.
 - Static byte/word arrays with literal or dynamic indices.
 - Typed heap allocations, raw pointer offsets, and explicit `free`.
 - Bitwise `&`, `|`, `~` (XOR), unary `~` (NOT), `<<`, `>>`, and hex literals.
 - Top-level `const` values and initialized byte/word/quad data tables.
+- Device intrinsics: `screen_size`, `set_color`, `plot`, `draw`, `clear`,
+  `read_key`, `quit_requested`, `now_ms`, and `sleep`.
 - Output: `print(integer_expr)` and `print("string literal")`.
 - Static string literals are emitted as `(address, length)` buffers.
 
-Not supported yet: device I/O, string values, modules, or Lua source-line
-mapping.
+Not supported yet: string values, modules, or Lua source-line mapping.
 
 ## Work items
 
@@ -35,7 +37,7 @@ mapping.
 | 3 | Heap allocation and pointers | Done | `alloc_bytes`/`alloc_words`, pointer offsets, `FREE`. |
 | 4 | Bitwise operators and hex literals | Done | `&`, `|`, binary `~`/unary `~`, `<<`, `>>`, `0x...`. |
 | 5 | Static data declarations | Done | `const`, `bytes`/`words`/`quads` tables, `EQU`/`DB`/`DW`/`DQ`. |
-| 6 | Device/runtime intrinsics | Pending | Screen, controller, timer, sleep port. |
+| 6 | Device/runtime intrinsics | Done | Screen, controller, timer macros; `DEO 0x41` sleep; SDL3/WASM smoke. |
 | 7 | Strings as values and string library bindings | Pending | String variables, `STRLENZ`, `PRINT_STR`, indexing/slicing. |
 | 8 | Modules/includes | Pending | Split source files sharing constants, data, and functions. |
 | 9 | Source-line mapping, `break`/`continue`, `elseif` | Pending | Debuggability and cleaner control flow for larger programs. |
@@ -192,12 +194,21 @@ local now = now_ms()
 sleep(20)
 ```
 
-**Design.** Treat these names as intrinsics that emit the corresponding
-`stdlib` macros plus any required `INCLUDE` directives. `sleep(ms)` maps to the
-host-extension `DEO 0x41`.
+**Design.** The intrinsic names are reserved and cannot be redefined as Lua
+functions. Each call emits the matching `stdlib` macro and pulls in only the
+`screen.asm`, `controller.asm`, or `timer.asm` file that defines it.
+`screen_size()` is the one two-result intrinsic and requires
+`local w, h = screen_size()`; codegen emits `SCREEN_SIZE` and assigns the locals
+in reverse stack order. `plot(x, y)` packs `(x << 16) | y` before calling
+`PLOT`. Void intrinsics are statements, while `read_key()`, `quit_requested()`,
+and `now_ms()` fold into integer expressions. `sleep(ms)` emits
+`DEO 0x41`, the SDL3/WASM host-extension port used by the typography demo.
 
-**Acceptance.** A generated ROM runs under the SDL3 and WASM hosts and draws,
-reads input, and yields with the same cadence as the assembly demo.
+**Acceptance.** The CLI golden fixture keeps the device branch dormant so its
+transcript stays deterministic; a smoke build flips `ENABLE` to `1` and runs the
+same generated ROM under SDL3 and WASM. It prints the 320x240 framebuffer size,
+reads an idle controller, checks the timer, draws/clears, and yields through
+`sleep` before halting.
 
 ### 7. Strings as values and string library bindings
 
@@ -274,3 +285,5 @@ skip or exit without flag variables.
 - **Item 5** — `EQU` constants and initialized byte/word/quad data tables;
   golden fixture `tests/lua/data.lua`. Also corrected static word arrays to
   reserve four bytes per element.
+- **Item 6** — screen/controller/timer intrinsics and `sleep`; golden fixture
+  `tests/lua/devices.lua` plus SDL3/WASM device smoke runs.
