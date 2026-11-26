@@ -44,6 +44,7 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@$(MAKE) --no-print-directory lua-raycaster-check
 	@$(MAKE) --no-print-directory debugger-check
 	@$(MAKE) --no-print-directory lua-debug-check
+	@$(MAKE) --no-print-directory boot-check
 	@$(MAKE) --no-print-directory snake-check
 	@$(MAKE) --no-print-directory typography-check
 	@$(MAKE) --no-print-directory sdl-check

@@ -17,15 +17,20 @@
     'VM_ERR_BAD_LOCAL'
   ];
 
+  const DEFAULT_ROM = 'boot.rom';
+
   const canvas = document.getElementById('screen');
   const ctx = canvas.getContext('2d');
   const consoleEl = document.getElementById('console');
   const statusEl = document.getElementById('status');
   const runBtn = document.getElementById('run');
   const resetBtn = document.getElementById('reset');
+  const loadBtn = document.getElementById('load');
   const romInput = document.getElementById('rom');
   const inputForm = document.getElementById('input-form');
   const consoleInput = document.getElementById('console-input');
+  const screenSizeEl = document.getElementById('screen-size');
+  const sizeButtons = Array.from(document.querySelectorAll('[data-screen-w]'));
 
   let startMs = performance.now();
   let currentR = 0;
@@ -33,6 +38,8 @@
   let currentB = 0;
   let frame = null;
   let frameBytes = null;
+  let screenW = 320;
+  let screenH = 240;
 
   /* The host keeps an offscreen framebuffer so a partially drawn VM frame is
    * never presented. This mirrors the SDL3 host: CLEAR and PIXEL only write to
@@ -56,6 +63,7 @@
       init(width, height) {
         canvas.width = width;
         canvas.height = height;
+        screenSizeEl.textContent = `${width} × ${height}`;
         ctx.imageSmoothingEnabled = false;
         frame = ctx.createImageData(width, height);
         frameBytes = frame.data;
@@ -97,8 +105,15 @@
     }
   };
 
-  function setStatus(text) {
+  function setStatus(text, state = 'idle') {
     statusEl.textContent = text;
+    statusEl.dataset.state = state;
+  }
+
+  function statusState(st) {
+    if (st === 0) return 'running';
+    if (st === 1 || st === 10) return 'halted';
+    return 'error';
   }
 
   function mapKey(event) {
@@ -123,7 +138,7 @@
 
   async function start() {
     if (typeof create0xvm !== 'function') {
-      setStatus('0xvm-wasm.js did not load');
+      setStatus('0xvm-wasm.js did not load', 'error');
       return;
     }
 
@@ -152,31 +167,69 @@
 
     let running = false;
     let romBytes = null;
+    let romName = '';
 
     function load(bytes, name) {
       running = false;
       romBytes = bytes;
-      api.init(320, 240);
+      romName = name;
+      api.init(screenW, screenH);
       consoleEl.textContent = '';
       const st = api.load(bytes, bytes.length);
-      setStatus(`${name}: ${STATUS_NAMES[st] || 'UNKNOWN'}`);
+      setStatus(`${name}: ${STATUS_NAMES[st] || 'UNKNOWN'}`, statusState(st));
       running = st === 0;
       runBtn.textContent = running ? 'Pause' : 'Run';
       canvas.focus();
     }
 
+    async function loadRomUrl(url) {
+      try {
+        // ROMs are rebuilt often while developing; never serve a cached copy.
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(String(response.status));
+        load(Array.from(new Uint8Array(await response.arrayBuffer())), url);
+      } catch (err) {
+        setStatus(`Could not load ${url}; choose a ROM file`, 'error');
+      }
+    }
+
+    function markSize() {
+      for (const button of sizeButtons) {
+        const active = Number(button.dataset.screenW) === screenW &&
+                       Number(button.dataset.screenH) === screenH;
+        button.classList.toggle('primary', active);
+        button.setAttribute('aria-pressed', String(active));
+      }
+    }
+
+    function applySize(w, h) {
+      if (w < 16 || w > 4096 || h < 16 || h > 4096) return;
+      screenW = w;
+      screenH = h;
+      markSize();
+      if (romBytes) {
+        load(romBytes, romName);
+      } else {
+        api.init(screenW, screenH);
+        setStatus(`screen ${screenW} × ${screenH}`, 'idle');
+      }
+    }
+
+    markSize();
+
     function pump() {
       if (running) {
         const st = api.run(250000);
         if (st === 0) {
-          setStatus(`Running · ${api.ticks()} ticks`);
+          setStatus(`${romName} · Running · ${api.ticks()} ticks`, 'running');
         } else {
           running = false;
           runBtn.textContent = 'Run';
+          const state = statusState(st);
+          const label = STATUS_NAMES[st] || st;
           setStatus(
-            st === 1 || st === 10
-              ? `${STATUS_NAMES[st]} · ${api.ticks()} ticks`
-              : `ERROR ${STATUS_NAMES[st] || st} · ${api.ticks()} ticks`
+            `${romName} · ${state === 'error' ? 'ERROR ' : ''}${label} · ${api.ticks()} ticks`,
+            state
           );
         }
       }
@@ -191,12 +244,23 @@
       runBtn.textContent = running ? 'Pause' : 'Run';
     });
     resetBtn.addEventListener('click', () => {
-      if (romBytes) load(romBytes, 'Restart');
+      if (romBytes) load(romBytes, romName);
     });
 
+    for (const button of sizeButtons) {
+      button.addEventListener('click', () => {
+        applySize(
+          Number(button.dataset.screenW),
+          Number(button.dataset.screenH)
+        );
+      });
+    }
+
+    loadBtn.addEventListener('click', () => romInput.click());
     romInput.addEventListener('change', async () => {
       const file = romInput.files && romInput.files[0];
       if (!file) return;
+      romInput.value = '';
       load(Array.from(new Uint8Array(await file.arrayBuffer())), file.name);
     });
 
@@ -213,28 +277,20 @@
     });
 
     window.addEventListener('keydown', (event) => {
-      if (event.target === consoleInput || event.target === romInput) return;
+      if (event.target.closest && event.target.closest('form')) return;
       const code = mapKey(event);
       if (code !== 0) {
         api.pushKey(code);
         event.preventDefault();
       }
     });
+
     window.addEventListener('beforeunload', () => api.quit());
 
-    const romUrl = new URLSearchParams(location.search).get('rom') || 'snake.rom';
-    try {
-      // The ROM is rebuilt often while developing; never let the browser
-      // serve a cached copy from before a fix landed.
-      const response = await fetch(romUrl, { cache: 'no-store' });
-      if (!response.ok) throw new Error(String(response.status));
-      load(Array.from(new Uint8Array(await response.arrayBuffer())), romUrl);
-    } catch (err) {
-      setStatus(`Could not load ${romUrl}; choose a ROM file`);
-    }
+    await loadRomUrl(DEFAULT_ROM);
 
     requestAnimationFrame(pump);
   }
 
-  start().catch((err) => setStatus(String(err)));
+  start().catch((err) => setStatus(String(err), 'error'));
 })();

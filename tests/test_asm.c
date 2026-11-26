@@ -576,7 +576,8 @@ static void test_stdlib_collections(void)
 static void test_stdlib_ports(void)
 {
     static const char *const names[] = {
-        "SYS_VERSION", "SYS_DEBUG", "SYS_HALT",
+        "SYS_VERSION", "SYS_DEBUG", "SYS_HALT", "SYS_CAPS",
+        "CAPS_CONSOLE", "CAPS_SCREEN", "CAPS_CONTROLLER", "CAPS_TIMER",
         "CONSOLE_PUTC", "CONSOLE_GETC", "CONSOLE_PUTI", "CONSOLE_PUTF",
         "CONSOLE_PUTS_ADDR", "CONSOLE_PUTS_LEN", "CONSOLE_PUTS",
         "CONSOLE_GETS_ADDR", "CONSOLE_GETS_MAX", "CONSOLE_GETS",
@@ -586,7 +587,8 @@ static void test_stdlib_ports(void)
         "TIMER_MS"
     };
     static const int64_t expected[] = {
-        VM_SYS_VERSION, VM_SYS_DEBUG, VM_SYS_HALT,
+        VM_SYS_VERSION, VM_SYS_DEBUG, VM_SYS_HALT, VM_SYS_CAPS,
+        VM_CAPS_CONSOLE, VM_CAPS_SCREEN, VM_CAPS_CONTROLLER, VM_CAPS_TIMER,
         VM_CONSOLE_PUTC, VM_CONSOLE_GETC, VM_CONSOLE_PUTI, VM_CONSOLE_PUTF,
         VM_CONSOLE_PUTS_ADDR, VM_CONSOLE_PUTS_LEN, VM_CONSOLE_PUTS,
         VM_CONSOLE_GETS_ADDR, VM_CONSOLE_GETS_MAX, VM_CONSOLE_GETS,

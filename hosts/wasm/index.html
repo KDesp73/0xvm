@@ -4,59 +4,203 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>0xvm — browser host</title>
+  <title>0xvm // browser host</title>
   <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: #101217; color: #e8eaf0; }
-    main { max-width: 1040px; margin: 0 auto; padding: 24px; }
-    h1 { font-size: 1.4rem; margin: 0 0 4px; }
-    .lede { margin: 0 0 20px; color: #a9afc0; }
-    .layout { display: grid; grid-template-columns: minmax(320px, 1fr) 320px; gap: 24px; }
-    .panel { background: #191c24; border: 1px solid #2b3040; border-radius: 10px; padding: 16px; }
-    canvas { display: block; width: 100%; height: auto; background: #000; image-rendering: pixelated; border-radius: 4px; }
-    .hint { color: #a9afc0; font-size: 0.9rem; margin: 12px 0 0; }
-    .controls { display: flex; gap: 8px; margin-bottom: 12px; }
-    button, input[type=file], input[type=text] { font: inherit; }
-    button { background: #3c6ef0; color: white; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: default; }
-    label { display: block; margin-bottom: 12px; color: #cdd2e0; font-size: 0.9rem; }
-    input[type=file] { width: 100%; margin-top: 4px; }
-    pre { height: 300px; overflow: auto; margin: 0 0 12px; padding: 10px; background: #0b0d12; border-radius: 6px; white-space: pre-wrap; }
-    form { display: flex; gap: 6px; }
-    input[type=text] { flex: 1; min-width: 0; background: #0b0d12; border: 1px solid #2b3040; border-radius: 6px; color: inherit; padding: 7px; }
-    #status { margin-top: 12px; color: #a9afc0; font-size: 0.9rem; }
-    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+    :root {
+      color-scheme: dark;
+      /* 0xvm house palette: 0 canvas, 1 ink, 2 structure, 3 pale-green accent. */
+      --p0: #060907;
+      --p1: #F2F6F0;
+      --p2: #2A352C;
+      --p3: #B9E5AD;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--p0);
+      color: var(--p1);
+      font: 12px/16px var(--mono);
+    }
+
+    .shell {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .header-strip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      height: 16px;
+      padding: 0 8px;
+      margin-bottom: 16px;
+      background: var(--p1);
+      color: var(--p0);
+    }
+
+    .header-strip span:last-child { opacity: .72; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 256px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    canvas {
+      display: block;
+      width: 640px;
+      max-width: 100%;
+      height: auto;
+      background: var(--p0);
+      image-rendering: pixelated;
+      border: 1px solid var(--p2);
+      outline: none;
+    }
+
+    canvas:focus-visible { outline: 1px solid var(--p3); outline-offset: 1px; }
+
+    .caption {
+      max-width: 640px;
+      margin: 8px 0 0;
+      color: var(--p1);
+      font-size: 11px;
+    }
+
+    .caption b { color: var(--p3); font-weight: 400; }
+
+    .side { min-width: 0; }
+    .row { display: flex; gap: 8px; margin-bottom: 16px; }
+    .block { margin-bottom: 24px; }
+
+    button {
+      padding: 4px 8px;
+      color: var(--p1);
+      background: var(--p2);
+      border: 1px solid var(--p2);
+      border-radius: 0;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .row button { flex: 1; }
+    #load { display: block; width: 100%; }
+    #rom { display: none; }
+
+    button.primary {
+      color: var(--p0);
+      background: var(--p3);
+      border-color: var(--p3);
+    }
+
+    button:hover { border-color: var(--p3); }
+    button:focus-visible { outline: 1px solid var(--p3); outline-offset: 1px; }
+    button:disabled { opacity: .5; cursor: default; }
+
+    .block-title {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--p1);
+      font-size: 11px;
+    }
+
+    .tty {
+      height: 176px;
+      overflow: auto;
+      margin: 0 0 8px;
+      padding: 8px;
+      color: var(--p1);
+      background: var(--p0);
+      border: 1px solid var(--p2);
+      white-space: pre-wrap;
+    }
+
+    form { display: flex; gap: 8px; }
+
+    form input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      padding: 4px 8px;
+      color: var(--p1);
+      background: var(--p0);
+      border: 1px solid var(--p2);
+    }
+
+    form input::placeholder { color: var(--p2); }
+    .size-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .size-grid button { padding: 4px 2px; }
+
+    #status { margin-top: 16px; color: var(--p1); font-size: 11px; }
+    #status::before { content: "■ "; color: var(--p3); }
+    #status[data-state="error"] { color: var(--p3); }
+
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      .side { padding-top: 16px; border-top: 1px solid var(--p2); }
+      .tty { height: 144px; }
+      .header-strip span:last-child { display: none; }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>0xvm — browser host</h1>
-    <p class="lede">Runs VMIM v2 ROMs with canvas Screen, keyboard Controller, and timer devices.</p>
-    <div class="layout">
-      <section class="panel">
+  <div class="shell">
+    <header class="header-strip">
+      <span>0xvm</span>
+      <span>vmim v2 · 64k · device page</span>
+    </header>
+
+    <main class="layout">
+      <section>
         <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
-        <p class="hint">Arrow keys move · space/enter act · escape quits. Click the screen if keys do not respond.</p>
+        <p class="caption">screen <span id="screen-size">320 × 240</span> · <b>esc</b> exit · pixel buffer</p>
       </section>
-      <aside class="panel">
-        <div class="controls">
-          <button id="run" disabled>Pause</button>
+
+      <aside class="side">
+        <div class="row">
+          <button id="run" class="primary" disabled>Pause</button>
           <button id="reset" disabled>Restart</button>
         </div>
-        <label>ROM file
-          <input id="rom" type="file" accept=".rom,.bin">
-        </label>
-        <pre id="console" aria-label="Console output"></pre>
-        <form id="input-form">
-          <input id="console-input" type="text" placeholder="console input" autocomplete="off">
-          <button type="submit">Send</button>
-        </form>
-        <div id="status">Loading…</div>
+
+        <div class="block">
+          <button id="load" type="button">load file</button>
+          <input id="rom" type="file" accept=".rom,.bin" hidden>
+        </div>
+
+        <div class="block">
+          <span class="block-title">screen size</span>
+          <div class="size-grid" role="group" aria-label="Screen size presets">
+            <button type="button" class="primary" data-screen-w="320" data-screen-h="240" aria-pressed="true">320×240</button>
+            <button type="button" data-screen-w="640" data-screen-h="480" aria-pressed="false">640×480</button>
+            <button type="button" data-screen-w="800" data-screen-h="600" aria-pressed="false">800×600</button>
+            <button type="button" data-screen-w="1024" data-screen-h="768" aria-pressed="false">1024×768</button>
+          </div>
+        </div>
+
+        <div class="block">
+          <span class="block-title">console</span>
+          <pre id="console" class="tty" aria-label="Console output"></pre>
+          <form id="input-form">
+            <input id="console-input" type="text" placeholder="input" autocomplete="off" spellcheck="false">
+            <button type="submit">Send</button>
+          </form>
+        </div>
+
+        <div id="status" data-state="loading" aria-live="polite">loading…</div>
       </aside>
-    </div>
-  </main>
+    </main>
+  </div>
+
   <!-- Bump the query when the host scripts change so browsers do not keep an
        old key map (e.g. one without Backspace/Delete) after a rebuild. -->
-  <script src="0xvm-wasm.js?v=2"></script>
-  <script src="0xvm-app.js?v=2"></script>
+  <script src="0xvm-wasm.js?v=6"></script>
+  <script src="0xvm-app.js?v=6"></script>
 </body>
 </html>

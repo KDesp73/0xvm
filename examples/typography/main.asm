@@ -18,7 +18,7 @@ start:
 
     PUSH G_W
     LOAD32
-    PUSH 2*BORDER
+    PUSH TEXT_X*2
     SUB
     PUSH PIXEL_W
     DIV
@@ -27,9 +27,7 @@ start:
 
     PUSH G_H
     LOAD32
-    PUSH 2*BAR_H
-    SUB
-    PUSH 2*BORDER
+    PUSH TEXT_MARGIN
     SUB
     PUSH PIXEL_H
     DIV

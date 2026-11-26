@@ -4,14 +4,24 @@
 
 ; ------------------------------------------------------------------ constants
 
-EQU SCALE        2
+; House grid: 8x8 cells, 5px glyph ink plus a 3px gutter. Keeping SCALE at 1
+; preserves the shared 5x8 font used by examples/boot.asm.
+EQU SCALE        1
 EQU GLYPH_W      5
-EQU CELL_W       GLYPH_W+1
+EQU CELL_W       8
 EQU CELL_H       8
 EQU PIXEL_W      CELL_W*SCALE
 EQU PIXEL_H      CELL_H*SCALE
-EQU BORDER       2
-EQU BAR_H        PIXEL_H+4
+EQU TILE         8
+
+; Header strip, content box, text, and status row all land on the tile grid.
+EQU HEADER_H     TILE
+EQU BOX_X        TILE
+EQU BOX_TOP      TILE*2
+EQU TEXT_X       TILE*2
+EQU TEXT_Y       TILE*3
+EQU TEXT_MARGIN  TILE*4       ; H - 40 leaves room for header/box/status
+
 IFNDEF FRAME_MS
 EQU FRAME_MS     66           ; ~15 updates/second
 ENDIF
@@ -34,13 +44,11 @@ EQU KEY_BACKSPACE 8
 EQU KEY_DELETE    9
 EQU NEWLINE       10
 
-EQU C_BG         0x101018
-EQU C_PANEL      0x181828
-EQU C_BORDER     0x405080
-EQU C_TITLE      0x00E0FF
-EQU C_TEXT       0xE8E8F0
-EQU C_CARET      0xFFC040
-EQU C_STATUS     0x90A0C0
+; Deep Ink house palette: canvas, ink, structure, accent.
+EQU C_CANVAS     0x060907
+EQU C_INK        0xF2F6F0
+EQU C_STRUCT     0x2A352C
+EQU C_ACCENT     0xB9E5AD
 
 ; Zero-page globals (absolute byte addresses).
 EQU G_W          0            ; framebuffer width

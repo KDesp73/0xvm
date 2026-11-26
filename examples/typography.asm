@@ -8,10 +8,12 @@
 ; caret, enter inserts a newline, and escape (or window close) exits.
 ;
 ; The implementation is split across examples/typography/; this file is the
-; entry point that pulls the pieces together in emission order.
+; entry point that pulls the pieces together in emission order. Drawing follows
+; the house style: Deep Ink palette, 8px grid, inverted header, hairline box,
+; and an accent caret in the glyph gutter.
 ;
 ; Run with: ./build/0xvm-sdl -f examples/typography.asm [-W 320] [-H 240]
-;       or: make wasm && serve build/ and open 0xvm-wasm.html?rom=typography.rom
+;       or: make wasm && serve build/ and load typography.rom in the browser host
 ; =============================================================================
 
 INCLUDE "all.asm"

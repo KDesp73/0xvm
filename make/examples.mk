@@ -2,13 +2,62 @@
 # Assembly-language example ROMs and their SDL smoke checks.
 # Included by the top-level Makefile.
 
-$(SNAKE_ROM): examples/snake.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+$(BOOT_ROM): $(BOOT_SRC) $(TYPOGRAPHY_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+	@echo "[INFO] Building boot ROM"
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+# Smoke builds cap the otherwise indefinite screen wait.
+$(BOOT_SMOKE_SRC): $(BOOT_SRC) $(TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@{ printf 'EQU BOOT_MAX_MS 500\n'; \
+	   sed -e 's|INCLUDE "typography/|INCLUDE "../examples/typography/|' $<; \
+	 } > $@
+
+$(BOOT_SMOKE_ROM): $(BOOT_SMOKE_SRC) $(TYPOGRAPHY_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+.PHONY: boot-check
+ifeq ($(SDL_HOST),)
+boot-check: $(BOOT_ROM) $(BUILD_DIR)/0xvm
+else
+boot-check: $(BOOT_ROM) $(BOOT_SMOKE_ROM) $(BUILD_DIR)/0xvm $(SDL_HOST)
+endif
+	@echo "[RUN] Boot CLI terminal check"
+	@out=$$(./$(BUILD_DIR)/0xvm -f $(BOOT_ROM) 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q '▄▄▄' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'KDESP73' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'LICENSE        MIT' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'VMIM VERSION' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'RAM BYTES      65536' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'CELL BITS      64' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ADDRESS BITS   16' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'BYTE-ENCODED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'DEVICE PAGE' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'Breach' && { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+ifeq ($(SDL_HOST),)
+	@echo "[RUN] Boot screen check skipped (SDL3 not found)"
+else
+	@echo "[RUN] Boot SDL screen check (dummy video)"
+	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(BOOT_SMOKE_ROM) -W 320 -H 240 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -Eq 'pixels=[1-9]' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'VMIM VERSION' && { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q '▄▄▄' && { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'Breach' && { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+endif
+
+$(SNAKE_ROM): examples/snake.asm $(TYPOGRAPHY_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
 	@echo "[INFO] Building Snake ROM"
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
 
-$(SNAKE_SMOKE_SRC): examples/snake.asm | $(BUILD_DIR)
+$(SNAKE_SMOKE_SRC): examples/snake.asm $(TYPOGRAPHY_SRC) | $(BUILD_DIR)
 	@sed -e 's/^EQU FRAME_MS    80/EQU FRAME_MS    1/' \
-	     -e 's/^EQU MAX_MOVES   0/EQU MAX_MOVES   12/' $< > $@
+	     -e 's/^EQU MAX_MOVES   0/EQU MAX_MOVES   12/' \
+	     -e 's|INCLUDE "typography/|INCLUDE "../examples/typography/|' $< > $@
 
 $(SNAKE_SMOKE_ROM): $(SNAKE_SMOKE_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm
 	@./$(BUILD_DIR)/0xasm -f $< -o $@

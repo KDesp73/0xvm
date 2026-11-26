@@ -216,6 +216,7 @@ Screen, Controller, and timer ports:
 | `0x00` | `VM_SYS_VERSION` | read | ROM format version |
 | `0x01` | `VM_SYS_DEBUG` | read/write | tick-prefix flag |
 | `0x02` | `VM_SYS_HALT` | write | halt with `VM_HALTED` |
+| `0x03` | `VM_SYS_CAPS` | read | host capability bitmask (see below) |
 | `0x10` | `VM_CONSOLE_PUTC` | write | low byte to stdout |
 | `0x11` | `VM_CONSOLE_GETC` | read | one byte from stdin (`0` on EOF) |
 | `0x12` | `VM_CONSOLE_PUTI` | write | signed decimal + newline |
@@ -237,6 +238,12 @@ Screen, Controller, and timer ports:
 | `0x30` | `VM_CONTROLLER_KEY` | read | next key-down, `0` if none (consumes) |
 | `0x31` | `VM_CONTROLLER_QUIT` | read | `1` after a window-close request |
 | `0x40` | `VM_TIMER_MS` | read | milliseconds since host start |
+
+`VM_SYS_CAPS` is always readable and returns a bitmask of
+`VM_CAPS_CONSOLE` (`0x01`), `VM_CAPS_SCREEN` (`0x02`),
+`VM_CAPS_CONTROLLER` (`0x04`), and `VM_CAPS_TIMER` (`0x08`). A ROM can branch on
+this mask before touching optional devices; the Console is always present in the
+supplied hosts.
 
 Screen, Controller, and timer ports are optional: a ROM that uses them depends
 on a host that provides them, and reads of unprovided ports return `VM_ERR_IO`.

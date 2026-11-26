@@ -62,6 +62,10 @@ endif
 LIB_STATIC = $(BUILD_DIR)/lib0xvm.a
 LIB_SHARED = $(BUILD_DIR)/lib0xvm.so
 CONFORMANCE_ROM = $(BUILD_DIR)/conformance-v2.rom
+BOOT_ROM = $(BUILD_DIR)/boot.rom
+BOOT_SRC = examples/boot.asm
+BOOT_SMOKE_SRC = $(BUILD_DIR)/boot-smoke.asm
+BOOT_SMOKE_ROM = $(BUILD_DIR)/boot-smoke.rom
 SNAKE_ROM = $(BUILD_DIR)/snake.rom
 SNAKE_SMOKE_SRC = $(BUILD_DIR)/snake-smoke.asm
 SNAKE_SMOKE_ROM = $(BUILD_DIR)/snake-smoke.rom

@@ -4,7 +4,7 @@
 
 .PHONY: wasm
 ifeq ($(EMCC_FOUND),yes)
-wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) \
+wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(BOOT_ROM) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) \
       $(LUA_TYPOGRAPHY_ROM) $(LUA_RAYCASTER_ROM) ## Build the browser/WASM host and example ROMs
 else
 wasm:
@@ -14,14 +14,14 @@ endif
 .PHONY: wasm-check
 ifeq ($(EMCC_FOUND),yes)
 ifeq ($(NODE_FOUND),yes)
-wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) \
+wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(BOOT_SMOKE_ROM) $(TYPOGRAPHY_ROM) \
             $(LUA_DEVICE_SMOKE_ROM) $(LUA_TYPOGRAPHY_WASM_ROM) \
-            $(LUA_RAYCASTER_WASM_ROM) ## Smoke-run Snake, conformance, typography, and Lua examples in the browser host under Node
+            $(LUA_RAYCASTER_WASM_ROM) ## Smoke-run boot, Snake, conformance, typography, and Lua examples in the browser host under Node
 	@echo "[RUN] WASM Snake smoke check"
 	@$(NODE) tests/wasm-smoke.mjs $(WASM_JS) $(SNAKE_SMOKE_ROM) \
 		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED) $(TYPOGRAPHY_ROM) \
 		$(LUA_DEVICE_SMOKE_ROM) $(LUA_TYPOGRAPHY_WASM_ROM) \
-		$(LUA_RAYCASTER_WASM_ROM)
+		$(LUA_RAYCASTER_WASM_ROM) $(BOOT_SMOKE_ROM)
 else
 wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM)
 	@echo "[WARN] node not found; skipping WASM Snake smoke check"

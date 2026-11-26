@@ -9,11 +9,15 @@ intro:
     DB 0
 
 title_text:
-    STR "0XVM TYPE / BITMAP TYPOGRAPHY"
+    STR "0XVM // TYPOGRAPHY"
+    DB 0
+
+mode_text:
+    STR "EDIT"
     DB 0
 
 status_text:
-    STR "PRINTABLE ASCII ENTERS TEXT | SPACE IS A CHARACTER"
+    STR "READY | ESC QUITS"
     DB 0
 
 done_text:

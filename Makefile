@@ -12,7 +12,7 @@ include make/bench.mk
 include make/hosts.mk
 
 .PHONY: all
-all: libs $(TOOLS) $(SDL_HOST) $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(TEST_BIN) $(CONFORMANCE_ROM) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) ## Build libraries, tools, hosts, tests, and ROMs
+all: libs $(TOOLS) $(SDL_HOST) $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(TEST_BIN) $(CONFORMANCE_ROM) $(BOOT_ROM) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) ## Build libraries, tools, hosts, tests, and ROMs
 
 .PHONY: clean
 clean: ## Remove all build files, libraries, and tools
