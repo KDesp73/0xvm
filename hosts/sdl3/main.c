@@ -28,6 +28,8 @@ typedef struct {
     Uint32 color;
     int64_t key;        /* queued key-down, consumed by VM_CONTROLLER_KEY */
     bool quit;          /* set by a window-close event */
+    bool sleep_requested; /* ROM asked the host to wait; handled by run loop */
+    int sleep_ms;
     Uint64 start_ms;
     uint64_t present_count;
     uint64_t pixel_count;
@@ -65,24 +67,46 @@ static inline uint64_t mono_ns(void)
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
+static void sdl_handle_event(SdlDevice *d, const SDL_Event *event)
+{
+    if (event->type == SDL_EVENT_QUIT) {
+        d->quit = true;
+    } else if (event->type == SDL_EVENT_KEY_DOWN) {
+        int64_t code = map_control_key(event->key.key);
+        if (code != 0 && (!event->key.repeat || code <= 4 || code == 8 || code == 9))
+            d->key = code;
+    } else if (event->type == SDL_EVENT_TEXT_INPUT) {
+        const char *text = event->text.text;
+        if (text && text[0] != '\0' && (unsigned char)text[1] == 0) {
+            unsigned char ch = (unsigned char)text[0];
+            if (ch >= 32u && ch <= 126u) d->key = (int64_t)ch;
+        }
+    }
+}
+
 static void sdl_poll(SdlDevice *d)
 {
     uint64_t t0 = mono_ns();
     SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_EVENT_QUIT) {
-            d->quit = true;
-        } else if (event.type == SDL_EVENT_KEY_DOWN) {
-            int64_t code = map_control_key(event.key.key);
-            if (code != 0 && (!event.key.repeat || code <= 4 || code == 8 || code == 9))
-                d->key = code;
-        } else if (event.type == SDL_EVENT_TEXT_INPUT) {
-            const char *text = event.text.text;
-            if (text && text[0] != '\0' && (unsigned char)text[1] == 0) {
-                unsigned char ch = (unsigned char)text[0];
-                if (ch >= 32u && ch <= 126u) d->key = (int64_t)ch;
-            }
-        }
+    while (SDL_PollEvent(&event)) sdl_handle_event(d, &event);
+    d->poll_ns += mono_ns() - t0;
+    d->poll_count++;
+}
+
+/* Wait for the ROM's requested delay without freezing input. Any event wakes
+ * the wait immediately, which keeps the SDL host as responsive as the browser
+ * host's requestAnimationFrame loop. */
+static void sdl_wait(SdlDevice *d, int ms)
+{
+    if (ms <= 0) return;
+    uint64_t t0 = mono_ns();
+    Uint64 deadline = SDL_GetTicks() + (Uint64)ms;
+    SDL_Event event;
+    for (;;) {
+        Uint64 now = SDL_GetTicks();
+        if (now >= deadline) break;
+        if (!SDL_WaitEventTimeout(&event, (Sint32)(deadline - now))) break;
+        sdl_handle_event(d, &event);
     }
     d->poll_ns += mono_ns() - t0;
     d->poll_count++;
@@ -222,10 +246,11 @@ static VmStatus sdl_write(void *ctx, VmState *vm, uint8_t port, int64_t value)
             d->clear_count++;
             return VM_OK;
         }
-        case 0x41u: { /* host extension: sleep ms */
+        case 0x41u: { /* host extension: schedule a wait, handled by the run loop */
             int64_t ms = value < 0 ? 0 : value;
             if (ms > 1000) ms = 1000;
-            if (ms > 0) SDL_Delay((Uint32)ms);
+            d->sleep_ms = (int)ms;
+            d->sleep_requested = true;
             return VM_OK;
         }
         default:
@@ -293,6 +318,11 @@ static int run(const char *path, int width, int height, bool debug)
             st = vm_step(&vm);
             since_poll++;
             if (st != VM_OK) break;
+            if (sdl.sleep_requested) {
+                sdl_wait(&sdl, sdl.sleep_ms);
+                sdl.sleep_requested = false;
+                since_poll = poll_every; /* process any wake-up events at once */
+            }
         }
     }
     uint64_t run_ns = mono_ns() - run_t0;
