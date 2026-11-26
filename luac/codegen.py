@@ -14,6 +14,14 @@ COMPARE_OPS = {
 
 ARITH_OPS = {'+': 'ADD', '-': 'SUB', '*': 'MUL', '/': 'DIV', '%': 'MOD'}
 
+BITWISE_OPS = {
+    '&': 'AND',
+    '|': 'OR',
+    '~': 'XOR',
+    '<<': 'SHL',
+    '>>': 'SHR',
+}
+
 
 def static_int(expr) -> int | None:
     """Return a compile-time integer value, or None for a runtime expression."""
@@ -282,13 +290,20 @@ class Codegen:
             _, width = self.emit_index_address(expr)
             self.emit_instr('LOAD8' if width == 1 else 'LOAD32')
         elif isinstance(expr, nodes.Unary):
-            self.emit_instr('PUSH 0')
-            self.emit_num(expr.operand)
-            self.emit_instr('SUB')
+            if expr.op == '-':
+                self.emit_instr('PUSH 0')
+                self.emit_num(expr.operand)
+                self.emit_instr('SUB')
+            elif expr.op == '~':
+                self.emit_num(expr.operand)
+                self.emit_instr('NOT')
+            else:
+                raise CompileError(f'unsupported unary operator {expr.op!r}')
         elif isinstance(expr, nodes.Binary):
             self.emit_num(expr.left)
             self.emit_num(expr.right)
-            op = COMPARE_OPS.get(expr.op) or ARITH_OPS.get(expr.op)
+            op = (COMPARE_OPS.get(expr.op) or ARITH_OPS.get(expr.op) or
+                  BITWISE_OPS.get(expr.op))
             if op is None:
                 raise CompileError(f'unsupported operator {expr.op!r}')
             self.emit_instr(op)

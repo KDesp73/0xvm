@@ -116,8 +116,9 @@ ROM, so the assembler still supplies labels and line mapping to `0xdb`. The
 supported subset covers integer literals, string literals passed to `print`,
 locals and assignment, arithmetic and comparisons, `if`/`else`, `while`,
 numeric `for` loops, functions with parameters/returns/recursion, static
-byte/word arrays with indexing, and typed heap allocations with pointer offsets.
-The roadmap for reaching a typography-level demo is in
+byte/word arrays with indexing, typed heap allocations with pointer offsets, and
+bitwise operators with hex literals. The roadmap for reaching a typography-level
+demo is in
 [`docs/Compiler-Design.md`](docs/Compiler-Design.md).
 
 Run it directly from the repository without installing anything:

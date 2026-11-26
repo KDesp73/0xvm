@@ -145,8 +145,36 @@ class Parser:
         return self.parse_comparison()
 
     def parse_comparison(self):
-        node = self.parse_additive()
+        node = self.parse_bit_or()
         while self.at('OP') and self.peek().text in ('==', '~=', '<', '<=', '>', '>='):
+            op = self.advance().text
+            node = nodes.Binary(op, node, self.parse_bit_or())
+        return node
+
+    def parse_bit_or(self):
+        node = self.parse_bit_xor()
+        while self.at('OP', '|'):
+            self.advance()
+            node = nodes.Binary('|', node, self.parse_bit_xor())
+        return node
+
+    def parse_bit_xor(self):
+        node = self.parse_bit_and()
+        while self.at('OP', '~'):
+            self.advance()
+            node = nodes.Binary('~', node, self.parse_bit_and())
+        return node
+
+    def parse_bit_and(self):
+        node = self.parse_shift()
+        while self.at('OP', '&'):
+            self.advance()
+            node = nodes.Binary('&', node, self.parse_shift())
+        return node
+
+    def parse_shift(self):
+        node = self.parse_additive()
+        while self.at('OP') and self.peek().text in ('<<', '>>'):
             op = self.advance().text
             node = nodes.Binary(op, node, self.parse_additive())
         return node
@@ -166,9 +194,9 @@ class Parser:
         return node
 
     def parse_unary(self):
-        if self.at('OP', '-'):
-            self.advance()
-            return nodes.Unary('-', self.parse_unary())
+        if self.at('OP', '-') or self.at('OP', '~'):
+            op = self.advance().text
+            return nodes.Unary(op, self.parse_unary())
         return self.parse_primary()
 
     def parse_primary(self):

@@ -20,8 +20,8 @@ KEYWORDS = {
     'function', 'return',
 }
 
-TWO_CHAR_OPS = {'==', '~=', '<=', '>='}
-ONE_CHAR_OPS = set('=+-*/%(),<>[]')
+TWO_CHAR_OPS = {'==', '~=', '<=', '>=', '<<', '>>'}
+ONE_CHAR_OPS = set('=+-*/%(),<>[]&|~')
 
 
 def _unescape(text: str, line: int) -> str:
@@ -84,6 +84,16 @@ def tokenize(source: str) -> list[Token]:
 
         if ch.isdigit():
             start = i
+            if ch == '0' and i + 1 < n and source[i + 1] in 'xX':
+                i += 2
+                digits = i
+                while i < n and source[i] in '0123456789abcdefABCDEF':
+                    i += 1
+                if i == digits:
+                    raise CompileError(f'line {line}: invalid hex literal')
+                text = source[start:i]
+                tokens.append(Token('INT', text, line, int(text[2:], 16)))
+                continue
             while i < n and source[i].isdigit():
                 i += 1
             tokens.append(Token('INT', source[start:i], line,

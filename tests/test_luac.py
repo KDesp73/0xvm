@@ -199,6 +199,47 @@ class LuacTests(unittest.TestCase):
                 'bad.lua',
             )
 
+    def test_lexer_parses_hex_and_bitwise_operators(self):
+        tokens = tokenize('0xFF 10 0X2a a & b | c ~ d << 2 >> 1 ~= e')
+        values = [t.value for t in tokens if t.kind == 'INT'][:3]
+        self.assertEqual(values, [255, 10, 42])
+        self.assertEqual([t.text for t in tokens],
+                         ['0xFF', '10', '0X2a', 'a', '&', 'b', '|', 'c',
+                          '~', 'd', '<<', '2', '>>', '1', '~=', 'e', '<eof>'])
+
+    def test_invalid_hex_literal_is_rejected(self):
+        with self.assertRaises(CompileError):
+            tokenize('0x')
+
+    def test_parser_uses_bitwise_precedence(self):
+        and_expr = Parser.from_source('print(1 | 2 & 3)').parse_program()[0].expr
+        self.assertEqual(and_expr.op, '|')
+        self.assertIsInstance(and_expr.right, nodes.Binary)
+        self.assertEqual(and_expr.right.op, '&')
+
+        shift_expr = Parser.from_source('print(1 << 2 + 3)').parse_program()[0].expr
+        self.assertEqual(shift_expr.op, '<<')
+        self.assertEqual(shift_expr.right.op, '+')
+
+        compare_expr = Parser.from_source('print(1 & 2 == 3)').parse_program()[0].expr
+        self.assertEqual(compare_expr.op, '==')
+        self.assertEqual(compare_expr.left.op, '&')
+
+    def test_codegen_emits_bitwise_instructions(self):
+        asm = compile_source(
+            'print(0xFF)\n'
+            'print(0xF0 & 0x3C)\n'
+            'print(0xF0 | 0x0F)\n'
+            'print(0xF0 ~ 0x0F)\n'
+            'print(~0)\n'
+            'print(1 << 4)\n'
+            'print(16 >> 2)',
+            'bits.lua',
+        )
+        for instruction in ('PUSH 255', 'AND', 'OR', 'XOR', 'NOT', 'SHL',
+                            'SHR'):
+            self.assertIn(instruction, asm)
+
 
 if __name__ == '__main__':
     unittest.main()

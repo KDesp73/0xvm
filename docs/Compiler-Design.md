@@ -18,11 +18,12 @@ committed on its own before the next one starts.
 - Functions with parameters, locals, `return`, forward calls, and recursion.
 - Static byte/word arrays with literal or dynamic indices.
 - Typed heap allocations, raw pointer offsets, and explicit `free`.
+- Bitwise `&`, `|`, `~` (XOR), unary `~` (NOT), `<<`, `>>`, and hex literals.
 - Output: `print(integer_expr)` and `print("string literal")`.
 - Static string literals are emitted as `(address, length)` buffers.
 
-Not supported yet: bitwise operations, device I/O, string values, modules, or
-Lua source-line mapping.
+Not supported yet: device I/O, string values, modules, or Lua source-line
+mapping.
 
 ## Work items
 
@@ -31,7 +32,7 @@ Lua source-line mapping.
 | 1 | Functions with parameters, returns, and scopes | Done | `CALL`/`RET` ABI, arguments via `PICK`, caller cleanup, recursion. |
 | 2 | Arrays/byte buffers and indexing | Done | `a[i]`, `LOAD8`/`STORE8`, `LOAD32`/`STORE32`. |
 | 3 | Heap allocation and pointers | Done | `alloc_bytes`/`alloc_words`, pointer offsets, `FREE`. |
-| 4 | Bitwise operators and hex literals | Pending | `&`, `|`, `~`, `<<`, `>>`, `0x...`. |
+| 4 | Bitwise operators and hex literals | Done | `&`, `|`, binary `~`/unary `~`, `<<`, `>>`, `0x...`. |
 | 5 | Static data declarations | Pending | `const`, byte/word arrays, `DB`/`DW`/`DQ` emission. |
 | 6 | Device/runtime intrinsics | Pending | Screen, controller, timer, sleep port. |
 | 7 | Strings as values and string library bindings | Pending | String variables, `STRLENZ`, `PRINT_STR`, indexing/slicing. |
@@ -133,13 +134,16 @@ local packed = x << 16 | y
 local color = 0xFFC040
 ```
 
-**Design.** Extend the lexer and precedence table for `<<`, `>>`, `&`, `|`,
-`~`. Map directly to `SHL`, `SHR`, `AND`, `OR`, `NOT`. Hex literals are parsed
-as integer tokens. Logical `and`/`or`/`not` remain a separate decision; bitwise
-operators are the immediate need.
+**Design.** The lexer accepts `<<`, `>>`, `&`, `|`, `~`, and `0x`/`0X` literals.
+Hex values become normal integer tokens and are emitted as decimal VM
+immediates. Precedence follows Lua: unary `-`/`~`, multiplicative, additive,
+shifts, `&`, binary `~`, `|`, then comparisons. Binary `~` maps to `XOR`, while
+unary `~` maps to `NOT`; `~=` remains the inequality comparison. Logical
+`and`/`or`/`not` remain a separate decision.
 
-**Acceptance.** Precedence matches C-like expectations; hex literals are
-emitted as VM immediates.
+**Acceptance.** Shifts, AND/OR/XOR, unary NOT, and hex literals produce the
+same values as the VM conformance program, and precedence relative to
+arithmetic and comparisons matches Lua.
 
 ### 5. Static data declarations
 
@@ -254,3 +258,5 @@ skip or exit without flag variables.
   checks; golden fixture `tests/lua/arrays.lua`.
 - **Item 3** — typed heap allocations, pointer offsets, runtime sizes, and
   `free`; golden fixture `tests/lua/heap.lua`.
+- **Item 4** — shifts, bitwise AND/OR/XOR/NOT, hex literals, and Lua
+  precedence; golden fixture `tests/lua/bitops.lua`.
