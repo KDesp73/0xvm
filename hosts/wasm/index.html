@@ -4,59 +4,464 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>0xvm — browser host</title>
+  <title>0xvm // browser host</title>
   <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: #101217; color: #e8eaf0; }
-    main { max-width: 1040px; margin: 0 auto; padding: 24px; }
-    h1 { font-size: 1.4rem; margin: 0 0 4px; }
-    .lede { margin: 0 0 20px; color: #a9afc0; }
-    .layout { display: grid; grid-template-columns: minmax(320px, 1fr) 320px; gap: 24px; }
-    .panel { background: #191c24; border: 1px solid #2b3040; border-radius: 10px; padding: 16px; }
-    canvas { display: block; width: 100%; height: auto; background: #000; image-rendering: pixelated; border-radius: 4px; }
-    .hint { color: #a9afc0; font-size: 0.9rem; margin: 12px 0 0; }
-    .controls { display: flex; gap: 8px; margin-bottom: 12px; }
-    button, input[type=file], input[type=text] { font: inherit; }
-    button { background: #3c6ef0; color: white; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: default; }
-    label { display: block; margin-bottom: 12px; color: #cdd2e0; font-size: 0.9rem; }
-    input[type=file] { width: 100%; margin-top: 4px; }
-    pre { height: 300px; overflow: auto; margin: 0 0 12px; padding: 10px; background: #0b0d12; border-radius: 6px; white-space: pre-wrap; }
+    :root {
+      color-scheme: dark;
+      --ink: #060a0f;
+      --ink-2: #0b1118;
+      --panel: #111a23;
+      --panel-2: #17222d;
+      --line: #2b3d4c;
+      --paper: #d8d9d1;
+      --muted: #8797a4;
+      --cyan: #78e7d0;
+      --amber: #f0b45f;
+      --red: #ff7272;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% -10%, rgba(120, 231, 208, .10), transparent 38rem),
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, .016) 0 1px, transparent 1px 4px),
+        linear-gradient(160deg, #05080c, #0b1118 55%, #060a0f);
+      color: var(--paper);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(120, 231, 208, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(120, 231, 208, .035) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, .55), transparent 70%);
+    }
+
+    .shell {
+      position: relative;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 24px 36px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      margin-bottom: 22px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand { display: flex; align-items: baseline; gap: 14px; }
+
+    .brand-mark {
+      color: var(--cyan);
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-shadow: 0 0 20px rgba(120, 231, 208, .35);
+    }
+
+    .brand-sub {
+      color: var(--muted);
+      font-size: .72rem;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .spec {
+      color: var(--muted);
+      font-size: .7rem;
+      letter-spacing: .12em;
+      line-height: 1.7;
+      text-align: right;
+      text-transform: uppercase;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .panel {
+      position: relative;
+      padding: 16px;
+      background: linear-gradient(155deg, var(--panel-2), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .38), inset 0 1px rgba(255, 255, 255, .035);
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 5px;
+      border: 1px solid rgba(255, 255, 255, .025);
+      pointer-events: none;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: .7rem;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .panel-index { color: var(--amber); }
+
+    .screen-bezel {
+      position: relative;
+      padding: 14px;
+      background: #04070a;
+      border: 1px solid #344958;
+      border-radius: 4px;
+      box-shadow:
+        inset 0 0 0 1px #000,
+        inset 0 0 46px rgba(0, 0, 0, .9),
+        0 0 0 1px rgba(120, 231, 208, .05);
+      overflow: hidden;
+    }
+
+    .screen-bezel::after {
+      content: "";
+      position: absolute;
+      inset: 14px;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0) 0 2px,
+        rgba(0, 0, 0, .18) 2px 4px
+      );
+      mix-blend-mode: multiply;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #000;
+      image-rendering: pixelated;
+      border-radius: 1px;
+      box-shadow: 0 0 28px rgba(120, 231, 208, .10);
+      outline: none;
+    }
+
+    canvas:focus-visible { box-shadow: 0 0 0 2px var(--cyan), 0 0 28px rgba(120, 231, 208, .25); }
+
+    .screen-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: .7rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .keymap {
+      margin-top: 16px;
+      padding: 12px;
+      color: var(--muted);
+      font-size: .76rem;
+      line-height: 1.9;
+      border: 1px dashed var(--line);
+      background: rgba(6, 10, 15, .35);
+    }
+
+    kbd {
+      display: inline-block;
+      min-width: 1.5em;
+      padding: 1px 5px;
+      color: var(--paper);
+      background: #0a1017;
+      border: 1px solid var(--line);
+      border-bottom-width: 2px;
+      border-radius: 2px;
+      font: inherit;
+      font-size: .72rem;
+      text-align: center;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    button {
+      font: inherit;
+      padding: 10px 12px;
+      color: var(--paper);
+      background: linear-gradient(#1d2934, #131b24);
+      border: 1px solid #34485a;
+      border-radius: 2px;
+      box-shadow: inset 0 1px rgba(255, 255, 255, .06), 0 2px 0 #05080c;
+      cursor: pointer;
+      font-size: .72rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    button:hover:not(:disabled) {
+      color: var(--cyan);
+      border-color: var(--cyan);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, .65);
+    }
+
+    button:disabled { opacity: .35; cursor: not-allowed; }
+
+    button.primary {
+      color: var(--cyan);
+      background: linear-gradient(#233630, #16241f);
+      border-color: #3f7669;
+    }
+
+    .field-label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: .7rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    #rom {
+      display: block;
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 7px;
+      color: var(--muted);
+      background: #0a1017;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      font: inherit;
+      font-size: .74rem;
+    }
+
+    #rom::file-selector-button {
+      margin-right: 10px;
+      padding: 5px 8px;
+      color: var(--paper);
+      background: #1b2732;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      font: inherit;
+      font-size: .7rem;
+      cursor: pointer;
+    }
+
+    .quick {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+
+    .chip {
+      padding: 5px 8px;
+      font-size: .66rem;
+      box-shadow: none;
+    }
+
+    .chip[data-active="true"] {
+      color: #06110e;
+      background: var(--cyan);
+      border-color: var(--cyan);
+    }
+
+    .tty {
+      height: 220px;
+      overflow: auto;
+      margin: 0 0 10px;
+      padding: 12px;
+      color: #a8e8d7;
+      background: #050b0c;
+      border: 1px solid #1d3030;
+      border-radius: 2px;
+      box-shadow: inset 0 0 26px rgba(0, 0, 0, .65);
+      font: inherit;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
     form { display: flex; gap: 6px; }
-    input[type=text] { flex: 1; min-width: 0; background: #0b0d12; border: 1px solid #2b3040; border-radius: 6px; color: inherit; padding: 7px; }
-    #status { margin-top: 12px; color: #a9afc0; font-size: 0.9rem; }
-    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+
+    form input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      padding: 9px;
+      color: var(--paper);
+      background: #0a1017;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      font: inherit;
+      font-size: .78rem;
+    }
+
+    form input[type="text"]::placeholder { color: #61707c; }
+
+    #status {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: .74rem;
+      letter-spacing: .04em;
+    }
+
+    #status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      background: var(--muted);
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px rgba(135, 151, 164, .14);
+    }
+
+    #status[data-state="running"]::before {
+      background: var(--cyan);
+      box-shadow: 0 0 0 2px rgba(120, 231, 208, .18), 0 0 12px rgba(120, 231, 208, .7);
+      animation: led-pulse 1.6s ease-in-out infinite;
+    }
+
+    #status[data-state="halted"]::before {
+      background: var(--amber);
+      box-shadow: 0 0 0 2px rgba(240, 180, 95, .16), 0 0 12px rgba(240, 180, 95, .55);
+    }
+
+    #status[data-state="error"]::before {
+      background: var(--red);
+      box-shadow: 0 0 0 2px rgba(255, 114, 114, .16), 0 0 12px rgba(255, 114, 114, .55);
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 20px;
+      padding-top: 12px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: .68rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    @keyframes led-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .45; }
+    }
+
+    @media (max-width: 900px) {
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .spec { text-align: left; }
+      .layout { grid-template-columns: 1fr; }
+      .tty { height: 180px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #status[data-state="running"]::before { animation: none; }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>0xvm — browser host</h1>
-    <p class="lede">Runs VMIM v2 ROMs with canvas Screen, keyboard Controller, and timer devices.</p>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">0xVM</span>
+        <span class="brand-sub">browser host // crt-01</span>
+      </div>
+      <div class="spec">VMIM v2 · 64K RAM<br>64-bit cells · device page</div>
+    </header>
+
     <div class="layout">
       <section class="panel">
-        <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
-        <p class="hint">Arrow keys move · space/enter act · escape quits. Click the screen if keys do not respond.</p>
+        <div class="panel-head">
+          <span>01 / display</span>
+          <span class="panel-index">screen 0x20</span>
+        </div>
+        <div class="screen-bezel">
+          <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
+        </div>
+        <div class="screen-meta">
+          <span>pixel buffer</span>
+          <span id="screen-size">320 × 240</span>
+        </div>
+        <div class="keymap">
+          <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> move &amp; turn ·
+          <kbd>space</kbd><kbd>enter</kbd> act ·
+          <kbd>esc</kbd> quit · click the screen if keys do not respond
+        </div>
       </section>
+
       <aside class="panel">
+        <div class="panel-head">
+          <span>02 / control</span>
+          <span class="panel-index">tty 0x10</span>
+        </div>
+
         <div class="controls">
-          <button id="run" disabled>Pause</button>
+          <button id="run" class="primary" disabled>Pause</button>
           <button id="reset" disabled>Restart</button>
         </div>
-        <label>ROM file
-          <input id="rom" type="file" accept=".rom,.bin">
-        </label>
-        <pre id="console" aria-label="Console output"></pre>
+
+        <span class="field-label">ROM cartridge</span>
+        <input id="rom" type="file" accept=".rom,.bin">
+        <div class="quick" aria-label="Example ROMs">
+          <button type="button" class="chip" data-rom="snake.rom">snake</button>
+          <button type="button" class="chip" data-rom="typography.rom">typography</button>
+          <button type="button" class="chip" data-rom="lua-raycaster.rom">raycaster</button>
+          <button type="button" class="chip" data-rom="lua-typography.rom">lua type</button>
+        </div>
+
+        <span class="field-label">Terminal output</span>
+        <pre id="console" class="tty" aria-label="Console output"></pre>
         <form id="input-form">
-          <input id="console-input" type="text" placeholder="console input" autocomplete="off">
+          <input id="console-input" type="text" placeholder="console input" autocomplete="off" spellcheck="false">
           <button type="submit">Send</button>
         </form>
-        <div id="status">Loading…</div>
+
+        <div id="status" data-state="loading" aria-live="polite">Loading…</div>
       </aside>
     </div>
-  </main>
+
+    <footer class="footer">
+      <span>0xvm / stack machine</span>
+      <span>build 0.1.0</span>
+    </footer>
+  </div>
+
   <!-- Bump the query when the host scripts change so browsers do not keep an
        old key map (e.g. one without Backspace/Delete) after a rebuild. -->
-  <script src="0xvm-wasm.js?v=2"></script>
-  <script src="0xvm-app.js?v=2"></script>
+  <script src="0xvm-wasm.js?v=3"></script>
+  <script src="0xvm-app.js?v=3"></script>
 </body>
 </html>

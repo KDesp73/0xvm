@@ -26,6 +26,8 @@
   const romInput = document.getElementById('rom');
   const inputForm = document.getElementById('input-form');
   const consoleInput = document.getElementById('console-input');
+  const screenSizeEl = document.getElementById('screen-size');
+  const quickButtons = Array.from(document.querySelectorAll('[data-rom]'));
 
   let startMs = performance.now();
   let currentR = 0;
@@ -56,6 +58,7 @@
       init(width, height) {
         canvas.width = width;
         canvas.height = height;
+        screenSizeEl.textContent = `${width} × ${height}`;
         ctx.imageSmoothingEnabled = false;
         frame = ctx.createImageData(width, height);
         frameBytes = frame.data;
@@ -97,8 +100,15 @@
     }
   };
 
-  function setStatus(text) {
+  function setStatus(text, state = 'idle') {
     statusEl.textContent = text;
+    statusEl.dataset.state = state;
+  }
+
+  function statusState(st) {
+    if (st === 0) return 'running';
+    if (st === 1 || st === 10) return 'halted';
+    return 'error';
   }
 
   function mapKey(event) {
@@ -123,7 +133,7 @@
 
   async function start() {
     if (typeof create0xvm !== 'function') {
-      setStatus('0xvm-wasm.js did not load');
+      setStatus('0xvm-wasm.js did not load', 'error');
       return;
     }
 
@@ -159,24 +169,40 @@
       api.init(320, 240);
       consoleEl.textContent = '';
       const st = api.load(bytes, bytes.length);
-      setStatus(`${name}: ${STATUS_NAMES[st] || 'UNKNOWN'}`);
+      setStatus(`${name}: ${STATUS_NAMES[st] || 'UNKNOWN'}`, statusState(st));
       running = st === 0;
       runBtn.textContent = running ? 'Pause' : 'Run';
+      for (const button of quickButtons) {
+        button.dataset.active = String(button.dataset.rom === name);
+      }
       canvas.focus();
+    }
+
+    async function loadRomUrl(url) {
+      try {
+        // ROMs are rebuilt often while developing; never serve a cached copy.
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(String(response.status));
+        load(Array.from(new Uint8Array(await response.arrayBuffer())), url);
+      } catch (err) {
+        setStatus(`Could not load ${url}; choose a ROM file`, 'error');
+      }
     }
 
     function pump() {
       if (running) {
         const st = api.run(250000);
         if (st === 0) {
-          setStatus(`Running · ${api.ticks()} ticks`);
+          setStatus(`Running · ${api.ticks()} ticks`, 'running');
         } else {
           running = false;
           runBtn.textContent = 'Run';
+          const state = statusState(st);
           setStatus(
-            st === 1 || st === 10
-              ? `${STATUS_NAMES[st]} · ${api.ticks()} ticks`
-              : `ERROR ${STATUS_NAMES[st] || st} · ${api.ticks()} ticks`
+            state === 'error'
+              ? `ERROR ${STATUS_NAMES[st] || st} · ${api.ticks()} ticks`
+              : `${STATUS_NAMES[st]} · ${api.ticks()} ticks`,
+            state
           );
         }
       }
@@ -199,6 +225,10 @@
       if (!file) return;
       load(Array.from(new Uint8Array(await file.arrayBuffer())), file.name);
     });
+
+    for (const button of quickButtons) {
+      button.addEventListener('click', () => loadRomUrl(button.dataset.rom));
+    }
 
     inputForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -223,18 +253,10 @@
     window.addEventListener('beforeunload', () => api.quit());
 
     const romUrl = new URLSearchParams(location.search).get('rom') || 'snake.rom';
-    try {
-      // The ROM is rebuilt often while developing; never let the browser
-      // serve a cached copy from before a fix landed.
-      const response = await fetch(romUrl, { cache: 'no-store' });
-      if (!response.ok) throw new Error(String(response.status));
-      load(Array.from(new Uint8Array(await response.arrayBuffer())), romUrl);
-    } catch (err) {
-      setStatus(`Could not load ${romUrl}; choose a ROM file`);
-    }
+    await loadRomUrl(romUrl);
 
     requestAnimationFrame(pump);
   }
 
-  start().catch((err) => setStatus(String(err)));
+  start().catch((err) => setStatus(String(err), 'error'));
 })();
