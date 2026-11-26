@@ -119,9 +119,11 @@ with `break`/`continue`, functions with parameters/returns/recursion, static
 byte/word arrays with indexing, typed heap allocations with pointer offsets,
 bitwise operators with hex literals, `const` values with initialized data tables,
 string bindings, top-level `import` modules, and device intrinsics for the
-screen, controller, timer, and host sleep port. The roadmap for reaching a
+screen, controller, timer, and host sleep port. The roadmap that led to the
 typography-level demo is in
-[`docs/Compiler-Design.md`](docs/Compiler-Design.md).
+[`docs/Compiler-Design.md`](docs/Compiler-Design.md). The completed capstone is
+[`examples/typography.lua`](examples/typography.lua), a graphical text editor
+with a bitmap font, caret editing, blink, and a timed main loop.
 
 Run it directly from the repository without installing anything:
 
@@ -131,6 +133,15 @@ python3 -m luac compile tests/lua/smoke.lua -o build/smoke.asm -m build/smoke.lu
 ./build/0xvm -f build/smoke.rom
 ./build/0xdb -f build/smoke.rom -s build/smoke.asm -m build/smoke.lumap
 make lua-check    # front-end unit tests plus all golden programs
+```
+
+Build and run the Lua typography demo with the SDL3 host:
+
+```sh
+python3 -m luac compile examples/typography.lua -o build/lua-typography.asm -m build/lua-typography.lumap
+./build/0xasm -f build/lua-typography.asm -o build/lua-typography.rom
+./build/0xvm-sdl -f build/lua-typography.rom -W 320 -H 240
+make lua-typography-check  # CLI golden run plus a bounded SDL smoke run
 ```
 
 The package can also be installed as the `0xluac` command. The name avoids a

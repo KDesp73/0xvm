@@ -5,9 +5,9 @@ assembly rather than a raw VMIM ROM keeps labels, source paths, and line
 mapping in the assembler, so `0xdb` can inspect generated programs without a
 new ROM metadata format.
 
-This document tracks the work needed before a typography-level graphical demo
-can be written in the subset. Each numbered item is implemented, tested, and
-committed on its own before the next one starts.
+This document tracks the work that made a typography-level graphical demo
+possible in the subset. Each numbered item was implemented, tested, and
+committed on its own before the next one started.
 
 ## Current subset
 
@@ -321,3 +321,25 @@ compile errors.
 - **Item 9** — `elseif`, `break`/`continue`, AST source metadata, `.lumap`
   sidecars, and `0xdb` Lua line breakpoints; golden fixture
   `tests/lua/control.lua`.
+- **Capstone** — `examples/typography.lua`, a Lua-source graphical text editor
+  using the font table, layout helpers, caret editing, blink, and timed loop.
+  Its `ENABLE` constant is flipped for the CLI golden run, and bounded smoke
+  builds run under SDL3 and WASM.
+
+## Capstone demo
+
+`examples/typography.lua` is the typography-level program the work items were
+building toward. It keeps editor state and the text buffer in `const` data
+tables, which are writable global VM labels because functions cannot share
+top-level locals in the current ABI. Caption byte tables replace string
+arguments, since string values are two-cell `(address, length)` pairs and are
+not valid function parameters yet. The program still uses string literals for
+the intro and completion lines.
+
+`make lua-typography-check` runs a CLI-safe build (`ENABLE = 0`), then a bounded
+SDL3 smoke build (`FRAME_MS = 1`, `MAX_FRAMES = 3`) that draws the full editor.
+`make wasm` includes the interactive ROM. `make wasm-check` builds it again with
+`REPORT = 1` so the script can read the state and text labels, then exercises
+insert, caret movement, backspace, delete, and exit in the browser host. The
+assembly demo remains unchanged, so its browser editing checks continue to
+cover the original app too.

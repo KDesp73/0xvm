@@ -81,6 +81,19 @@ LUA_MAPS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).lumap)
 LUA_ROMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).rom)
 LUA_DEVICE_SMOKE_SRC = $(BUILD_DIR)/lua-devices-smoke.lua
 LUA_DEVICE_SMOKE_ROM = $(BUILD_DIR)/lua-devices-smoke.rom
+LUA_TYPOGRAPHY_SRC = examples/typography.lua
+LUA_TYPOGRAPHY_ASM = $(BUILD_DIR)/lua-typography.asm
+LUA_TYPOGRAPHY_ROM = $(BUILD_DIR)/lua-typography.rom
+LUA_TYPOGRAPHY_CLI_SRC = $(BUILD_DIR)/lua-typography-cli.lua
+LUA_TYPOGRAPHY_CLI_ASM = $(BUILD_DIR)/lua-typography-cli.asm
+LUA_TYPOGRAPHY_CLI_ROM = $(BUILD_DIR)/lua-typography-cli.rom
+LUA_TYPOGRAPHY_SMOKE_SRC = $(BUILD_DIR)/lua-typography-smoke.lua
+LUA_TYPOGRAPHY_SMOKE_ASM = $(BUILD_DIR)/lua-typography-smoke.asm
+LUA_TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/lua-typography-smoke.rom
+LUA_TYPOGRAPHY_WASM_SRC = $(BUILD_DIR)/lua-typography-wasm.lua
+LUA_TYPOGRAPHY_WASM_ASM = $(BUILD_DIR)/lua-typography-wasm.asm
+LUA_TYPOGRAPHY_WASM_ROM = $(BUILD_DIR)/lua-typography-wasm.rom
+LUA_TYPOGRAPHY_EXPECTED = $(TEST_DIR)/lua/typography.expected
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
@@ -288,6 +301,32 @@ $(BUILD_DIR)/lua-devices-smoke.asm: $(LUA_DEVICE_SMOKE_SRC) $(LUAC_MODULES) $(PY
 	@echo "[INFO] Compiling Lua device smoke source"
 	@python3 -m luac compile $< -o $@
 
+$(LUA_TYPOGRAPHY_ASM): $(LUA_TYPOGRAPHY_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography source"
+	@python3 -m luac compile $< -o $@ -m $(BUILD_DIR)/lua-typography.lumap
+
+$(LUA_TYPOGRAPHY_CLI_SRC): $(LUA_TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@sed 's/^const ENABLE = 1$$/const ENABLE = 0/' $< > $@
+
+$(LUA_TYPOGRAPHY_CLI_ASM): $(LUA_TYPOGRAPHY_CLI_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography CLI source"
+	@python3 -m luac compile $< -o $@
+
+$(LUA_TYPOGRAPHY_SMOKE_SRC): $(LUA_TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@sed -e 's/^const FRAME_MS = 66$$/const FRAME_MS = 1/' \
+	     -e 's/^const MAX_FRAMES = 0$$/const MAX_FRAMES = 3/' $< > $@
+
+$(LUA_TYPOGRAPHY_SMOKE_ASM): $(LUA_TYPOGRAPHY_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography smoke source"
+	@python3 -m luac compile $< -o $@
+
+$(LUA_TYPOGRAPHY_WASM_SRC): $(LUA_TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@sed 's/^const REPORT = 0$$/const REPORT = 1/' $< > $@
+
+$(LUA_TYPOGRAPHY_WASM_ASM): $(LUA_TYPOGRAPHY_WASM_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua typography browser source"
+	@python3 -m luac compile $< -o $@
+
 .PHONY: lua-device-check
 ifeq ($(SDL_HOST),)
 lua-device-check: $(LUA_DEVICE_SMOKE_ROM)
@@ -298,6 +337,31 @@ lua-device-check: $(LUA_DEVICE_SMOKE_ROM) $(SDL_HOST)
 	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(LUA_DEVICE_SMOKE_ROM) -W 320 -H 240 2>&1); \
 		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
 		printf '%s\n' "$$out" | grep -q 'DEVICE OK' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
+		exit 0
+endif
+
+.PHONY: lua-typography-check
+ifeq ($(SDL_HOST),)
+lua-typography-check: $(LUA_TYPOGRAPHY_ROM) $(LUA_TYPOGRAPHY_CLI_ROM) \
+                      $(LUA_TYPOGRAPHY_EXPECTED) $(BUILD_DIR)/0xvm
+else
+lua-typography-check: $(LUA_TYPOGRAPHY_ROM) $(LUA_TYPOGRAPHY_CLI_ROM) \
+                      $(LUA_TYPOGRAPHY_SMOKE_ROM) $(LUA_TYPOGRAPHY_EXPECTED) \
+                      $(BUILD_DIR)/0xvm $(SDL_HOST)
+endif
+	@echo "[RUN] Lua typography CLI check"
+	@./$(BUILD_DIR)/0xvm -f $(LUA_TYPOGRAPHY_CLI_ROM) 2>/dev/null \
+		| sed '/^\[INFO\] /d' > $(BUILD_DIR)/lua-typography-actual.txt
+	@diff -u $(LUA_TYPOGRAPHY_EXPECTED) $(BUILD_DIR)/lua-typography-actual.txt
+ifeq ($(SDL_HOST),)
+	@echo "[RUN] Lua typography SDL check (SDL3 not found)"
+else
+	@echo "[RUN] Lua typography SDL smoke check (dummy video)"
+	@out=$$(SDL_VIDEODRIVER=dummy ./$(SDL_HOST) -f $(LUA_TYPOGRAPHY_SMOKE_ROM) \
+		-W 320 -H 240 2>&1); \
+		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'TYPOGRAPHY OK' || { printf '%s\n' "$$out"; exit 1; }; \
 		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
 		exit 0
 endif
@@ -349,6 +413,7 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@$(MAKE) --no-print-directory conformance-check
 	@$(MAKE) --no-print-directory lua-check
 	@$(MAKE) --no-print-directory lua-device-check
+	@$(MAKE) --no-print-directory lua-typography-check
 	@$(MAKE) --no-print-directory debugger-check
 	@$(MAKE) --no-print-directory lua-debug-check
 	@$(MAKE) --no-print-directory snake-check
@@ -403,7 +468,8 @@ bench-compare: bench ## Compare current benchmarks with the committed baseline [
 
 .PHONY: wasm
 ifeq ($(EMCC_FOUND),yes)
-wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) ## Build the browser/WASM host and example ROMs
+wasm: $(WASM_JS) $(WASM_APP) $(WASM_HTML) $(SNAKE_ROM) $(TYPOGRAPHY_ROM) \
+      $(LUA_TYPOGRAPHY_ROM) ## Build the browser/WASM host and example ROMs
 else
 wasm:
 	@echo "[WARN] emcc not found; skipping browser/WASM host"
@@ -412,11 +478,12 @@ endif
 .PHONY: wasm-check
 ifeq ($(EMCC_FOUND),yes)
 ifeq ($(NODE_FOUND),yes)
-wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) $(LUA_DEVICE_SMOKE_ROM) ## Smoke-run Snake, conformance, typography, and Lua devices in the browser host under Node
+wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM) $(TYPOGRAPHY_ROM) \
+            $(LUA_DEVICE_SMOKE_ROM) $(LUA_TYPOGRAPHY_WASM_ROM) ## Smoke-run Snake, conformance, typography, and Lua examples in the browser host under Node
 	@echo "[RUN] WASM Snake smoke check"
 	@$(NODE) tests/wasm-smoke.mjs $(WASM_JS) $(SNAKE_SMOKE_ROM) \
 		$(CONFORMANCE_ROM) $(CONFORMANCE_EXPECTED) $(TYPOGRAPHY_ROM) \
-		$(LUA_DEVICE_SMOKE_ROM)
+		$(LUA_DEVICE_SMOKE_ROM) $(LUA_TYPOGRAPHY_WASM_ROM)
 else
 wasm-check: $(WASM_JS) $(SNAKE_SMOKE_ROM) $(CONFORMANCE_ROM)
 	@echo "[WARN] node not found; skipping WASM Snake smoke check"

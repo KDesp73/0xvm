@@ -625,6 +625,24 @@ class LuacTests(unittest.TestCase):
         self.assertRegex(text, r'\t[^\t]*helper\.lua\t1\n')
         self.assertNotIn('\tbad.lua\t', text)
 
+    def test_typography_example_compiles(self):
+        source = Path(__file__).resolve().parents[1] / 'examples' / 'typography.lua'
+        asm = compile_file(source)
+        self.assertIn('INCLUDE "screen.asm"', asm)
+        self.assertIn('INCLUDE "controller.asm"', asm)
+        self.assertIn('INCLUDE "timer.asm"', asm)
+        self.assertIn('__lua_fn_draw_glyph:', asm)
+        self.assertIn('DQ -8608480292191076352', asm)
+        self.assertIn('__lua_str_1: STR "TYPOGRAPHY OK"', asm)
+
+    def test_typography_example_has_a_cli_safe_branch(self):
+        source = Path(__file__).resolve().parents[1] / 'examples' / 'typography.lua'
+        text = source.read_text().replace('const ENABLE = 1',
+                                         'const ENABLE = 0', 1)
+        asm = compile_source(text, 'typography.lua')
+        self.assertIn('EQU ENABLE 0', asm)
+        self.assertIn('__lua_str_1: STR "TYPOGRAPHY OK"', asm)
+
 
 if __name__ == '__main__':
     unittest.main()
