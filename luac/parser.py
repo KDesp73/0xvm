@@ -44,6 +44,11 @@ class Parser:
             raise CompileError(f'line {token.line}: expected {want}, got {token.text}')
         return self.advance()
 
+    @staticmethod
+    def located(node, token: Token):
+        node.line = token.line
+        return node
+
     def parse_program(self) -> list:
         statements = []
         while not self.at('EOF'):
@@ -68,54 +73,75 @@ class Parser:
         self.expect('OP', ')')
         return args
 
+    def parse_if_tail(self, token: Token):
+        """Parse an `if`/`elseif` chain; the keyword is already consumed."""
+        branches = []
+        cond = self.parse_expr()
+        self.expect('KEYWORD', 'then')
+        branches.append((token, cond, self.parse_block('elseif', 'else', 'end')))
+
+        while self.at('KEYWORD', 'elseif'):
+            branch_token = self.advance()
+            cond = self.parse_expr()
+            self.expect('KEYWORD', 'then')
+            branches.append(
+                (branch_token, cond, self.parse_block('elseif', 'else', 'end'))
+            )
+
+        else_body = []
+        if self.accept('KEYWORD', 'else'):
+            else_body = self.parse_block('end')
+        self.expect('KEYWORD', 'end')
+
+        branch_token, cond, body = branches[-1]
+        node = self.located(nodes.If(cond, body, else_body), branch_token)
+        for branch_token, cond, body in reversed(branches[:-1]):
+            node = self.located(nodes.If(cond, body, [node]), branch_token)
+        return node
+
     def parse_statement(self):
         if self.accept('KEYWORD', 'import'):
             token = self.expect('STRING')
-            return nodes.Import(token.value, token.line)
+            return self.located(nodes.Import(token.value), token)
 
         if self.accept('KEYWORD', 'local'):
+            token = self.tokens[self.pos - 1]
             names = [self.expect('IDENT').text]
             while self.accept('OP', ','):
                 names.append(self.expect('IDENT').text)
             self.expect('OP', '=')
             expr = self.parse_expr()
             if len(names) == 1:
-                return nodes.Local(names[0], expr)
-            return nodes.LocalMulti(names, expr)
+                return self.located(nodes.Local(names[0], expr), token)
+            return self.located(nodes.LocalMulti(names, expr), token)
 
         if self.accept('KEYWORD', 'const'):
+            token = self.tokens[self.pos - 1]
             name = self.expect('IDENT').text
             self.expect('OP', '=')
-            return nodes.Const(name, self.parse_expr())
+            return self.located(nodes.Const(name, self.parse_expr()), token)
 
         if self.at('KEYWORD', 'print'):
-            self.advance()
+            token = self.advance()
             self.expect('OP', '(')
             expr = self.parse_expr()
             self.expect('OP', ')')
-            return nodes.Print(expr)
+            return self.located(nodes.Print(expr), token)
 
         if self.at('KEYWORD', 'if'):
-            self.advance()
-            cond = self.parse_expr()
-            self.expect('KEYWORD', 'then')
-            then_body = self.parse_block('else', 'end')
-            else_body = []
-            if self.accept('KEYWORD', 'else'):
-                else_body = self.parse_block('end')
-            self.expect('KEYWORD', 'end')
-            return nodes.If(cond, then_body, else_body)
+            token = self.advance()
+            return self.parse_if_tail(token)
 
         if self.at('KEYWORD', 'while'):
-            self.advance()
+            token = self.advance()
             cond = self.parse_expr()
             self.expect('KEYWORD', 'do')
             body = self.parse_block('end')
             self.expect('KEYWORD', 'end')
-            return nodes.While(cond, body)
+            return self.located(nodes.While(cond, body), token)
 
         if self.at('KEYWORD', 'for'):
-            self.advance()
+            token = self.advance()
             name = self.expect('IDENT').text
             self.expect('OP', '=')
             start = self.parse_expr()
@@ -124,9 +150,10 @@ class Parser:
             self.expect('KEYWORD', 'do')
             body = self.parse_block('end')
             self.expect('KEYWORD', 'end')
-            return nodes.For(name, start, limit, body)
+            return self.located(nodes.For(name, start, limit, body), token)
 
         if self.accept('KEYWORD', 'function'):
+            token = self.tokens[self.pos - 1]
             name = self.expect('IDENT').text
             self.expect('OP', '(')
             params = []
@@ -137,18 +164,28 @@ class Parser:
             self.expect('OP', ')')
             body = self.parse_block('end')
             self.expect('KEYWORD', 'end')
-            return nodes.Function(name, params, body)
+            return self.located(nodes.Function(name, params, body), token)
 
         if self.accept('KEYWORD', 'return'):
+            token = self.tokens[self.pos - 1]
             if (self.at('KEYWORD', 'end') or self.at('KEYWORD', 'else') or
-                    self.at('EOF')):
-                return nodes.Return()
-            return nodes.Return(self.parse_expr())
+                    self.at('KEYWORD', 'elseif') or self.at('EOF')):
+                return self.located(nodes.Return(), token)
+            return self.located(nodes.Return(self.parse_expr()), token)
+
+        if self.accept('KEYWORD', 'break'):
+            token = self.tokens[self.pos - 1]
+            return self.located(nodes.Break(), token)
+
+        if self.accept('KEYWORD', 'continue'):
+            token = self.tokens[self.pos - 1]
+            return self.located(nodes.Continue(), token)
 
         if self.at('IDENT'):
-            name = self.advance().text
+            token = self.advance()
+            name = token.text
             if self.accept('OP', '('):
-                return nodes.Call(name, self.parse_args())
+                return self.located(nodes.Call(name, self.parse_args()), token)
             target = nodes.Var(name)
             while self.accept('OP', '['):
                 index = self.parse_expr()
@@ -156,8 +193,10 @@ class Parser:
                 target = nodes.Index(target, index)
             self.expect('OP', '=')
             if isinstance(target, nodes.Index):
-                return nodes.AssignIndex(target, self.parse_expr())
-            return nodes.Assign(name, self.parse_expr())
+                return self.located(
+                    nodes.AssignIndex(target, self.parse_expr()), token
+                )
+            return self.located(nodes.Assign(name, self.parse_expr()), token)
 
         token = self.peek()
         raise CompileError(f'line {token.line}: unexpected statement starting with {token.text}')

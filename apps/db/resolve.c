@@ -72,7 +72,24 @@ static bool path_matches(const char *actual, const char *wanted)
     return strcmp(path_base(actual), path_base(wanted)) == 0;
 }
 
-/* `40` selects source line 40; `file.asm:40` disambiguates includes. */
+static bool address_for_asm_line(Debugger *db, size_t line, uint16_t *out)
+{
+    uint32_t cur = code_start(db);
+    while (cur < db->image_end && cur <= UINT16_MAX) {
+        char dis[VM_DIS_LINE_MAX];
+        unsigned size = vm_disassemble_range(db->vm.mem, (uint16_t)cur,
+                                             db->image_end, dis, sizeof dis);
+        if (size == 0u) break;
+        if (asm_line_of(db->program, (uint16_t)cur) == line) {
+            *out = (uint16_t)cur;
+            return true;
+        }
+        cur += size;
+    }
+    return false;
+}
+
+/* `40` selects source line 40; `file.lua:40` disambiguates mapped modules. */
 bool resolve_line_ref(Debugger *db, const char *text, uint16_t *out)
 {
     if (!db->program || !text || !*text) return false;
@@ -93,8 +110,22 @@ bool resolve_line_ref(Debugger *db, const char *text, uint16_t *out)
     unsigned long line = strtoul(number, &end, 10);
     if (end == number || *end != '\0' || errno == ERANGE || line == 0u)
         return false;
-    if (!wanted) wanted = asm_file_of(db->program, db->vm.ip);
 
+    if (db->source_map.count != 0u) {
+        if (!wanted) {
+            const char *current = NULL;
+            size_t current_line = 0u;
+            if (!source_map_address(db, db->vm.ip, &current, &current_line))
+                return false;
+            wanted = current;
+        }
+        size_t asm_line = 0u;
+        if (!source_map_find(&db->source_map, wanted, (size_t)line, &asm_line))
+            return false;
+        return address_for_asm_line(db, asm_line, out);
+    }
+
+    if (!wanted) wanted = asm_file_of(db->program, db->vm.ip);
     uint32_t cur = code_start(db);
     while (cur < db->image_end && cur <= UINT16_MAX) {
         char dis[VM_DIS_LINE_MAX];

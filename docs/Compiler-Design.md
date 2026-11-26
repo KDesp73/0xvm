@@ -15,7 +15,8 @@ committed on its own before the next one starts.
 - Comparisons: `==`, `~=`, `<`, `<=`, `>`, `>=`.
 - Locals and assignment: `local x = expr`, `local w, h = screen_size()`,
   `x = expr`.
-- Control flow: `if`/`else`, `while`, numeric `for` with an implicit step of `1`.
+- Control flow: `if`/`elseif`/`else`, `while`, numeric `for` with an implicit
+  step of `1`, plus `break` and `continue` inside loops.
 - Functions with parameters, locals, `return`, forward calls, and recursion.
 - Static byte/word arrays with literal or dynamic indices.
 - Typed heap allocations, raw pointer offsets, and explicit `free`.
@@ -30,9 +31,10 @@ committed on its own before the next one starts.
 - Static string literals are emitted as `(address, length)` buffers.
 - Top-level `import "name"` loads `name.lua` relative to the importing file and
   merges constants, data, functions, and top-level statements into one program.
+- `-m/--map` writes a Lua source-line sidecar; `0xdb -m` overlays it on the
+  assembler's line data for stepping, listing, and line breakpoints.
 
-Not supported yet: string function parameters/returns or Lua source-line
-mapping.
+Not supported yet: string function parameters/returns or table values.
 
 ## Work items
 
@@ -46,7 +48,7 @@ mapping.
 | 6 | Device/runtime intrinsics | Done | Screen, controller, timer macros; `DEO 0x41` sleep; SDL3/WASM smoke. |
 | 7 | Strings as values and string library bindings | Done | `(addr, len)` locals, stdlib bindings, read-only indexing, clamped slicing. |
 | 8 | Modules/includes | Done | `import`, relative resolution, one-time expansion, merged symbols. |
-| 9 | Source-line mapping, `break`/`continue`, `elseif` | Pending | Debuggability and cleaner control flow for larger programs. |
+| 9 | Source-line mapping, `break`/`continue`, `elseif` | Done | Sidecar line map for `0xdb`; loop jumps and chained conditions. |
 
 ### 1. Functions with parameters, returns, and scopes
 
@@ -272,13 +274,19 @@ duplicate, and circular imports produce clear compile errors.
 
 **Goal.** Make large generated programs debuggable and control flow readable.
 
-**Design.** Add `break`, `continue`, and `elseif` to the parser/codegen with
-label stacks. For `0xdb`, emit a sidecar mapping from generated `.asm` lines to
-`.lua` lines and teach the debugger to apply it, because VMIM ROMs carry no
-metadata.
+**Design.** `elseif` is parsed as nested `If` nodes sharing one `end`, and
+`break`/`continue` jump through a codegen loop-label stack. `continue` jumps to
+the condition label in `while` loops and to the increment label in numeric
+`for` loops. Each AST node carries its source line and file; emitted assembly
+lines are recorded in a `.lumap` sidecar written by `0xluac -m`. `0xdb -m` loads
+that map and overlays it on assembler line metadata, so `print_current`, `list`,
+and line breakpoints can use Lua file/line references. Fallback behavior for
+assembly sources or ROMs without a map is unchanged.
 
-**Acceptance.** `0xdb` can step and set breakpoints in `.lua` terms; loops can
-skip or exit without flag variables.
+**Acceptance.** A golden program uses `elseif`, `break`, and `continue`; a
+scripted `0xdb` session sets a breakpoint with `control.lua:9` and steps with
+Lua line display. Missing loop jumps and missing source metadata remain clear
+compile errors.
 
 ## Workflow
 
@@ -310,3 +318,6 @@ skip or exit without flag variables.
   and clamped slicing; golden fixture `tests/lua/strings.lua`.
 - **Item 8** — top-level `import`, relative module resolution, one-time
   expansion, and merged symbol tables; golden fixture `tests/lua/modules.lua`.
+- **Item 9** — `elseif`, `break`/`continue`, AST source metadata, `.lumap`
+  sidecars, and `0xdb` Lua line breakpoints; golden fixture
+  `tests/lua/control.lua`.

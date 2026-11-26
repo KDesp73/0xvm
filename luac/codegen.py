@@ -1,5 +1,7 @@
 """Emit 0xasm source for the supported Lua subset."""
 
+from contextlib import contextmanager
+
 from .lexer import CompileError
 from . import nodes
 
@@ -183,6 +185,10 @@ class Codegen:
         self.program = program
         self.source_name = source_name
         self.lines: list[str] = []
+        self.line_map: list[tuple[int, str, int]] = []
+        self.current_source = source_name
+        self.current_line = 0
+        self.loop_stack: list[tuple[str, str]] = []
         self.strings: dict[str, tuple[str, int]] = {}
         self.arrays: list[tuple[str, str, int]] = []
         self.constants: dict[str, int] = {}
@@ -213,10 +219,24 @@ class Codegen:
         return f'__lua_{prefix}_{self.label_count}'
 
     def emit(self, text: str = '') -> None:
+        if text and self.current_line:
+            self.line_map.append(
+                (len(self.lines) + 1, self.current_source, self.current_line)
+            )
         self.lines.append(text)
 
     def emit_instr(self, text: str) -> None:
-        self.lines.append(f'    {text}')
+        self.emit(f'    {text}')
+
+    @contextmanager
+    def at_source(self, node):
+        saved = (self.current_source, self.current_line)
+        self.current_source = getattr(node, 'file', None) or self.source_name
+        self.current_line = getattr(node, 'line', 0)
+        try:
+            yield
+        finally:
+            self.current_source, self.current_line = saved
 
     def scan_expr(self, expr) -> None:
         """Register stdlib includes needed by intrinsics in an expression."""
@@ -816,6 +836,10 @@ class Codegen:
             raise CompileError(f'unsupported expression {type(expr).__name__}')
 
     def emit_statement(self, statement) -> None:
+        with self.at_source(statement):
+            self.emit_statement_node(statement)
+
+    def emit_statement_node(self, statement) -> None:
         if isinstance(statement, nodes.Function):
             raise CompileError('nested functions are not supported')
         if isinstance(statement, nodes.Import):
@@ -925,6 +949,18 @@ class Codegen:
             self.emit_call(statement, keep_result=False)
             return
 
+        if isinstance(statement, nodes.Break):
+            if not self.loop_stack:
+                raise CompileError('break outside loop')
+            self.emit_instr(f'JMP {self.loop_stack[-1][1]}')
+            return
+
+        if isinstance(statement, nodes.Continue):
+            if not self.loop_stack:
+                raise CompileError('continue outside loop')
+            self.emit_instr(f'JMP {self.loop_stack[-1][0]}')
+            return
+
         if isinstance(statement, nodes.If):
             false_label = self.label('else')
             end_label = self.label('endif')
@@ -945,8 +981,10 @@ class Codegen:
             self.emit(cond_label + ':')
             self.emit_num(statement.cond)
             self.emit_instr(f'JMP_Z {end_label}')
+            self.loop_stack.append((cond_label, end_label))
             for child in statement.body:
                 self.emit_statement(child)
+            self.loop_stack.pop()
             self.emit_instr(f'JMP {cond_label}')
             self.emit(end_label + ':')
             return
@@ -956,6 +994,7 @@ class Codegen:
             var = self.scope.index(statement.name)
             limit = self.scope.index(limit_name)
             cond_label = self.label('for')
+            step_label = self.label('for_step')
             end_label = self.label('endfor')
             self.emit_num(statement.start)
             self.emit_instr(f'LOCAL_SET {var}')
@@ -966,8 +1005,11 @@ class Codegen:
             self.emit_instr(f'LOCAL_GET {limit}')
             self.emit_instr('CMP_LE')
             self.emit_instr(f'JMP_Z {end_label}')
+            self.loop_stack.append((step_label, end_label))
             for child in statement.body:
                 self.emit_statement(child)
+            self.loop_stack.pop()
+            self.emit(step_label + ':')
             self.emit_instr(f'LOCAL_GET {var}')
             self.emit_instr('PUSH 1')
             self.emit_instr('ADD')
@@ -984,22 +1026,25 @@ class Codegen:
             scope.declare(param)
         self.collect(function.body, scope)
 
-        self.emit()
-        self.emit(f'{self.function_label(function.name)}:')
-        self.scope = scope
-        self.in_function = True
-        self.emit_instr(f'ENTER {scope.size}')
-        for index, param in enumerate(function.params):
-            self.emit_instr(f'PUSH {scope.size + len(function.params) - index - 1}')
-            self.emit_instr('PICK')
-            self.emit_instr(f'LOCAL_SET {index}')
+        with self.at_source(function):
+            self.emit()
+            self.emit(f'{self.function_label(function.name)}:')
+            self.scope = scope
+            self.in_function = True
+            self.emit_instr(f'ENTER {scope.size}')
+            for index, param in enumerate(function.params):
+                self.emit_instr(
+                    f'PUSH {scope.size + len(function.params) - index - 1}'
+                )
+                self.emit_instr('PICK')
+                self.emit_instr(f'LOCAL_SET {index}')
 
-        for statement in function.body:
-            self.emit_statement(statement)
+            for statement in function.body:
+                self.emit_statement(statement)
 
-        self.emit_instr('PUSH 0')
-        self.emit_instr('RET')
-        self.in_function = False
+            self.emit_instr('PUSH 0')
+            self.emit_instr('RET')
+            self.in_function = False
 
     def generate(self) -> str:
         self.scan_statements(self.program)

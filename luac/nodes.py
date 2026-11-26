@@ -3,113 +3,130 @@
 from dataclasses import dataclass, field
 
 
+@dataclass(kw_only=True)
+class Node:
+    """Base node carrying source metadata for debug line maps."""
+
+    line: int = 0
+    file: str | None = None
+
+
 @dataclass
-class Int:
+class Int(Node):
     value: int
 
 
 @dataclass
-class Str:
+class Str(Node):
     value: str
 
 
 @dataclass
-class Data:
+class Data(Node):
     directive: str
     values: list
 
 
 @dataclass
-class Const:
+class Const(Node):
     name: str
     expr: object
 
 
 @dataclass
-class Import:
+class Import(Node):
     path: str
-    line: int = 0
 
 
 @dataclass
-class Var:
+class Var(Node):
     name: str
 
 
 @dataclass
-class Unary:
+class Unary(Node):
     op: str
     operand: object
 
 
 @dataclass
-class Binary:
+class Binary(Node):
     op: str
     left: object
     right: object
 
 
 @dataclass
-class Call:
+class Call(Node):
     name: str
     args: list
 
 
 @dataclass
-class Index:
+class Index(Node):
     base: object
     index: object
 
 
 @dataclass
-class Local:
+class Local(Node):
     name: str
     expr: object
 
 
 @dataclass
-class LocalMulti:
+class LocalMulti(Node):
     names: list[str]
     expr: object
 
 
 @dataclass
-class Assign:
+class Assign(Node):
     name: str
     expr: object
 
 
 @dataclass
-class AssignIndex:
+class AssignIndex(Node):
     target: Index
     expr: object
 
 
 @dataclass
-class Print:
+class Print(Node):
     expr: object
 
 
 @dataclass
-class Return:
+class Return(Node):
     expr: object | None = None
 
 
 @dataclass
-class If:
+class Break(Node):
+    pass
+
+
+@dataclass
+class Continue(Node):
+    pass
+
+
+@dataclass
+class If(Node):
     cond: object
     then_body: list
     else_body: list = field(default_factory=list)
 
 
 @dataclass
-class While:
+class While(Node):
     cond: object
     body: list
 
 
 @dataclass
-class For:
+class For(Node):
     name: str
     start: object
     limit: object
@@ -117,7 +134,7 @@ class For:
 
 
 @dataclass
-class Function:
+class Function(Node):
     name: str
     params: list
     body: list

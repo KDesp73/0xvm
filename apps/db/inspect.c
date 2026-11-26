@@ -13,8 +13,9 @@ void print_current(Debugger *db)
     }
     dbg_out(db, "-> %s", dis);
     const AsmSymbol *sym = asm_symbol_at(db->program, db->vm.ip);
-    const char *path = asm_file_of(db->program, db->vm.ip);
-    size_t line = asm_line_of(db->program, db->vm.ip);
+    const char *path = NULL;
+    size_t line = 0u;
+    source_map_address(db, db->vm.ip, &path, &line);
     if (sym) dbg_out(db, "  <%s>", sym->name);
     if (path && line) dbg_out(db, "  %s:%zu", path, line);
     else if (line) dbg_out(db, "  line %zu", line);
@@ -172,8 +173,9 @@ void list_cmd(Debugger *db, const char *arg)
         dbg_out(db, "Source mapping requires an assembly file (use -s with a ROM).\n");
         return;
     }
-    const char *path = asm_file_of(db->program, db->vm.ip);
-    size_t line = asm_line_of(db->program, db->vm.ip);
+    const char *path = NULL;
+    size_t line = 0u;
+    source_map_address(db, db->vm.ip, &path, &line);
     if (arg && *arg) {
         int64_t value;
         if (parse_i64(arg, &value)) {
@@ -181,15 +183,23 @@ void list_cmd(Debugger *db, const char *arg)
                 dbg_err("line numbers start at 1");
                 return;
             }
-            line = (size_t)value;
+            if (db->source_map.count == 0u) {
+                line = (size_t)value;
+            } else {
+                uint16_t addr;
+                if (!resolve_line_ref(db, arg, &addr)) {
+                    dbg_err("cannot resolve line '%s'", arg);
+                    return;
+                }
+                source_map_address(db, addr, &path, &line);
+            }
         } else {
             uint16_t addr;
             if (!resolve_expr(db, arg, &addr) && !resolve_line_ref(db, arg, &addr)) {
                 dbg_err("cannot resolve '%s'", arg);
                 return;
             }
-            path = asm_file_of(db->program, addr);
-            line = asm_line_of(db->program, addr);
+            source_map_address(db, addr, &path, &line);
         }
     }
     if (line == 0u) {

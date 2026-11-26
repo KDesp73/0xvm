@@ -86,6 +86,7 @@ int main(int argc, char **argv)
         cli_arg_new('v', "version", "Print the program version", no_argument),
         cli_arg_new('f', "file", "Assembly source or VMIM ROM file", required_argument),
         cli_arg_new('s', "symbols", "Assembly source to use as symbols for a ROM", required_argument),
+        cli_arg_new('m', "lua-map", "Lua source-line map (.lumap) to overlay", required_argument),
         cli_arg_new('i', "input", "File to use for Console input", required_argument),
         cli_arg_new('x', "execute", "Read debugger commands from a script", required_argument),
         cli_arg_new('I', "include-dir", "Add a directory to the INCLUDE search path", required_argument),
@@ -94,6 +95,7 @@ int main(int argc, char **argv)
 
     const char *path = NULL;
     const char *symbols_path = NULL;
+    const char *lua_map_path = NULL;
     const char *input_path = NULL;
     const char *script_path = NULL;
     const char **include_dirs = NULL;
@@ -102,7 +104,7 @@ int main(int argc, char **argv)
     LOOP_ARGS(opt, args) {
         switch (opt) {
             case 'h':
-                cli_help(args, NULL, "0xdb -f FILE [-s SOURCE] [-i INPUT] [-x SCRIPT] [-I DIR]...",
+                cli_help(args, NULL, "0xdb -f FILE [-s SOURCE] [-m MAP] [-i INPUT] [-x SCRIPT] [-I DIR]...",
                          "Interactive debugger for 0xvm programs. Console input is read\n"
                          "from -i (or /dev/null) so it never competes with commands.");
                 cli_args_free(&args);
@@ -115,6 +117,7 @@ int main(int argc, char **argv)
                 return EXIT_SUCCESS;
             case 'f': path = optarg; break;
             case 's': symbols_path = optarg; break;
+            case 'm': lua_map_path = optarg; break;
             case 'i': input_path = optarg; break;
             case 'x': script_path = optarg; break;
             case 'I': {
@@ -188,6 +191,17 @@ int main(int argc, char **argv)
     }
     free(include_dirs);
 
+    if (lua_map_path && !source_map_load(&db.source_map, lua_map_path)) {
+        if (script_path) fclose(db.cmd);
+        fclose(db.program_input);
+        if (db.program) { asm_program_free(db.program); free(db.program); }
+        free(db.image);
+        vm_free(&db.vm);
+        return EXIT_FAILURE;
+    }
+    if (lua_map_path && db.source_map.count == 0u)
+        dbg_err("source map '%s' is empty", lua_map_path);
+
     dbg_out(&db, "0xdb: loaded %s (%zu bytes)\n", path, db.image_len);
     print_current(&db);
     if (db.interactive) print_help(&db);
@@ -207,6 +221,7 @@ int main(int argc, char **argv)
 
     if (script_path) fclose(db.cmd);
     if (db.program_input != stdin) fclose(db.program_input);
+    source_map_free(&db.source_map);
     if (db.program) { asm_program_free(db.program); free(db.program); }
     free(db.image);
     vm_free(&db.vm);

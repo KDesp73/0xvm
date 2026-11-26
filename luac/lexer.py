@@ -16,8 +16,8 @@ class Token:
 
 
 KEYWORDS = {
-    'local', 'print', 'if', 'then', 'else', 'end', 'while', 'do', 'for',
-    'function', 'return', 'const', 'import',
+    'local', 'print', 'if', 'then', 'elseif', 'else', 'end', 'while', 'do',
+    'for', 'function', 'return', 'break', 'continue', 'const', 'import',
 }
 
 TWO_CHAR_OPS = {'==', '~=', '<=', '>=', '<<', '>>'}

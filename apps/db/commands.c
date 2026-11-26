@@ -25,6 +25,7 @@ void print_help(Debugger *db)
         "\n"
         "Addresses are hex with 0x, labels, `$`, or label+$offset. A plain number\n"
         "in `break`/`list` is a source line; prefix it with `*` for an address.\n"
+        "With -m MAP, line references use the Lua source map from 0xluac.\n"
         "Use -i FILE for Console input so it does not mix with debugger commands.\n");
 }
 

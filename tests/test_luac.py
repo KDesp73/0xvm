@@ -533,6 +533,98 @@ class LuacTests(unittest.TestCase):
                 compile_file(main)
         self.assertIn('duplicate function', str(caught.exception))
 
+    def test_lexer_recognizes_elseif_break_and_continue(self):
+        tokens = tokenize('elseif break continue')
+        self.assertEqual([t.text for t in tokens],
+                         ['elseif', 'break', 'continue', '<eof>'])
+        self.assertTrue(all(t.kind == 'KEYWORD' for t in tokens[:-1]))
+
+    def test_parser_builds_control_flow_nodes_with_lines(self):
+        program = Parser.from_source(
+            'if a == 1 then\n'
+            '    break\n'
+            'elseif a == 2 then\n'
+            '    continue\n'
+            'else\n'
+            '    print(a)\n'
+            'end'
+        ).parse_program()
+        outer = program[0]
+        self.assertIsInstance(outer, nodes.If)
+        self.assertEqual(outer.line, 1)
+        self.assertIsInstance(outer.then_body[0], nodes.Break)
+        self.assertEqual(outer.then_body[0].line, 2)
+        nested = outer.else_body[0]
+        self.assertIsInstance(nested, nodes.If)
+        self.assertEqual(nested.line, 3)
+        self.assertIsInstance(nested.then_body[0], nodes.Continue)
+        self.assertEqual(nested.then_body[0].line, 4)
+
+    def test_codegen_emits_break_continue_and_elseif(self):
+        asm = compile_source(
+            'local i = 0\n'
+            'while i < 3 do\n'
+            '    i = i + 1\n'
+            '    if i == 2 then\n'
+            '        continue\n'
+            '    elseif i == 3 then\n'
+            '        break\n'
+            '    end\n'
+            'end',
+            'control.lua',
+        )
+        self.assertIn('    JMP __lua_while_1', asm)
+        self.assertIn('    JMP __lua_endwhile_2', asm)
+        self.assertIn('__lua_else_5:', asm)
+        self.assertEqual(asm.count('    JMP_Z '), 3)
+
+    def test_break_and_continue_require_a_loop(self):
+        for statement in ('break', 'continue'):
+            with self.subTest(statement=statement), self.assertRaises(CompileError):
+                compile_source(statement, 'bad.lua')
+
+    def test_continue_skips_to_for_step(self):
+        asm = compile_source(
+            'for i = 1, 3 do\n'
+            '    if i == 2 then\n'
+            '        continue\n'
+            '    end\n'
+            '    print(i)\n'
+            'end',
+            'control.lua',
+        )
+        self.assertRegex(asm, r'    JMP __lua_for_step_\d+\n')
+        self.assertRegex(asm, r'__lua_for_step_\d+:\n    LOCAL_GET ')
+
+    def test_golden_control_fixture(self):
+        fixture = Path(__file__).resolve().parent / 'lua' / 'control.lua'
+        asm = compile_file(fixture)
+        self.assertIn('    JMP __lua_while_1', asm)
+        self.assertIn('    JMP __lua_endwhile_2', asm)
+        self.assertRegex(asm, r'    JMP __lua_for_step_\d+\n')
+        self.assertIn('    LOCAL_GET 0\n    PRINT', asm)
+
+    def test_compile_file_writes_lua_line_map(self):
+        fixture = Path(__file__).resolve().parent / 'lua' / 'control.lua'
+        with tempfile.TemporaryDirectory() as directory:
+            map_path = Path(directory) / 'control.lumap'
+            compile_file(fixture, map_path)
+            text = map_path.read_text()
+        self.assertIn('# luac source map v1', text)
+        self.assertIn('\ttests/lua/control.lua\t9\n', text)
+        self.assertIn('\ttests/lua/control.lua\t18\n', text)
+
+    def test_line_map_tracks_imported_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_source(root, 'helper.lua', 'print("HELPER")')
+            main = self.write_source(root, 'main.lua', 'import "helper"')
+            map_path = root / 'main.lumap'
+            compile_file(main, map_path)
+            text = map_path.read_text()
+        self.assertRegex(text, r'\t[^\t]*helper\.lua\t1\n')
+        self.assertNotIn('\tbad.lua\t', text)
+
 
 if __name__ == '__main__':
     unittest.main()

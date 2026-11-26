@@ -72,16 +72,20 @@ TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
 LUAC_MODULES    = $(wildcard luac/*.py)
 PYPROJECT       = pyproject.toml
 PIP            ?= pip3
-LUA_CASES       = smoke functions arrays heap bitops data strings modules devices
+LUA_CASES       = smoke functions arrays heap bitops data strings modules control devices
 LUA_SRCS        = $(foreach case,$(LUA_CASES),$(TEST_DIR)/lua/$(case).lua)
 LUA_MODULE_SRCS = $(wildcard $(TEST_DIR)/lua/modules/*.lua)
 LUA_ASMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).asm)
+LUA_MAPS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).lumap)
+.SECONDARY: $(LUA_ASMS)
 LUA_ROMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).rom)
 LUA_DEVICE_SMOKE_SRC = $(BUILD_DIR)/lua-devices-smoke.lua
 LUA_DEVICE_SMOKE_ROM = $(BUILD_DIR)/lua-devices-smoke.rom
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
+LUA_DEBUG_SCRIPT = $(TEST_DIR)/lua/control.dbg.in
+LUA_DEBUG_EXPECTED = $(TEST_DIR)/lua/control.dbg.expected
 UNAME_S   := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     SHARED_FLAG = -dynamiclib
@@ -266,7 +270,12 @@ endif
 $(BUILD_DIR)/lua-%.asm: $(TEST_DIR)/lua/%.lua $(LUA_MODULE_SRCS) \
                         $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
 	@echo "[INFO] Compiling Lua source $*"
-	@python3 -m luac compile $< -o $@
+	@python3 -m luac compile $< -o $@ -m $(BUILD_DIR)/lua-$*.lumap
+
+$(BUILD_DIR)/lua-%.lumap: $(TEST_DIR)/lua/%.lua $(LUA_MODULE_SRCS) \
+                          $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua source map $*"
+	@python3 -m luac compile $< -o $(BUILD_DIR)/lua-$*.asm -m $@
 
 $(BUILD_DIR)/lua-%.rom: $(BUILD_DIR)/lua-%.asm $(BUILD_DIR)/0xasm
 	@echo "[INFO] Assembling Lua output $*"
@@ -294,7 +303,7 @@ lua-device-check: $(LUA_DEVICE_SMOKE_ROM) $(SDL_HOST)
 endif
 
 .PHONY: lua-check
-lua-check: $(LUA_ROMS) $(BUILD_DIR)/0xvm ## Compile and run the Lua subset golden programs
+lua-check: $(LUA_ROMS) $(LUA_MAPS) $(BUILD_DIR)/0xvm ## Compile and run the Lua subset golden programs
 	@echo "[RUN] Lua compiler front-end unit checks"
 	@python3 $(TEST_DIR)/test_luac.py
 	@for case in $(LUA_CASES); do \
@@ -323,6 +332,16 @@ debugger-check: $(BUILD_DIR)/0xdb examples/gcd.asm $(DEBUGGER_SCRIPT) $(DEBUGGER
 		> $(BUILD_DIR)/debugger-actual.txt
 	@diff -u $(DEBUGGER_EXPECTED) $(BUILD_DIR)/debugger-actual.txt
 
+.PHONY: lua-debug-check
+lua-debug-check: $(BUILD_DIR)/0xdb $(BUILD_DIR)/lua-control.rom \
+                 $(BUILD_DIR)/lua-control.asm $(BUILD_DIR)/lua-control.lumap \
+                 $(LUA_DEBUG_SCRIPT) $(LUA_DEBUG_EXPECTED) ## Step Lua source via 0xdb
+	@echo "[RUN] 0xdb Lua source-map check"
+	@./$(BUILD_DIR)/0xdb -f $(BUILD_DIR)/lua-control.rom \
+		-s $(BUILD_DIR)/lua-control.asm -m $(BUILD_DIR)/lua-control.lumap \
+		-x $(LUA_DEBUG_SCRIPT) > $(BUILD_DIR)/lua-debug-actual.txt
+	@diff -u $(LUA_DEBUG_EXPECTED) $(BUILD_DIR)/lua-debug-actual.txt
+
 .PHONY: test
 test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformance checks
 	@echo "[RUN] 0xtest"
@@ -331,6 +350,7 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@$(MAKE) --no-print-directory lua-check
 	@$(MAKE) --no-print-directory lua-device-check
 	@$(MAKE) --no-print-directory debugger-check
+	@$(MAKE) --no-print-directory lua-debug-check
 	@$(MAKE) --no-print-directory snake-check
 	@$(MAKE) --no-print-directory typography-check
 	@$(MAKE) --no-print-directory sdl-check

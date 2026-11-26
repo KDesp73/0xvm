@@ -114,21 +114,23 @@ diff automatically.
 The `luac/` package is an early compiler that emits `0xasm` text rather than a
 ROM, so the assembler still supplies labels and line mapping to `0xdb`. The
 supported subset covers integer literals, string values, locals and assignment,
-arithmetic and comparisons, `if`/`else`, `while`, numeric `for` loops, functions
-with parameters/returns/recursion, static byte/word arrays with indexing, typed
-heap allocations with pointer offsets, bitwise operators with hex literals,
-`const` values with initialized data tables, string bindings, top-level
-`import` modules, and device intrinsics for the screen, controller, timer, and
-host sleep port. The roadmap for reaching a typography-level demo is in
+arithmetic and comparisons, `if`/`elseif`/`else`, `while`, numeric `for` loops
+with `break`/`continue`, functions with parameters/returns/recursion, static
+byte/word arrays with indexing, typed heap allocations with pointer offsets,
+bitwise operators with hex literals, `const` values with initialized data tables,
+string bindings, top-level `import` modules, and device intrinsics for the
+screen, controller, timer, and host sleep port. The roadmap for reaching a
+typography-level demo is in
 [`docs/Compiler-Design.md`](docs/Compiler-Design.md).
 
 Run it directly from the repository without installing anything:
 
 ```sh
-python3 -m luac compile tests/lua/smoke.lua -o build/smoke.asm
+python3 -m luac compile tests/lua/smoke.lua -o build/smoke.asm -m build/smoke.lumap
 ./build/0xasm -f build/smoke.asm -o build/smoke.rom
 ./build/0xvm -f build/smoke.rom
-make lua-check    # front-end unit tests plus the golden program above
+./build/0xdb -f build/smoke.rom -s build/smoke.asm -m build/smoke.lumap
+make lua-check    # front-end unit tests plus all golden programs
 ```
 
 The package can also be installed as the `0xluac` command. The name avoids a
@@ -145,9 +147,10 @@ For a non-editable install, run `pip3 install .` instead, or use
 Strings are static `(addr, length)` buffers and string locals occupy two VM
 cells; numbers, function results, and heap addresses are signed 64-bit cells.
 Imports are resolved relative to the importing file and flattened into one
-assembly output; duplicate or circular imports are errors. Table values, string
-function parameters/returns, and source-level line remapping are not implemented
-yet.
+assembly output; duplicate or circular imports are errors. `-m/--map` writes a
+Lua source-line sidecar that `0xdb` loads with `-m/--lua-map`, so stepping and
+line breakpoints can use Lua files and line numbers. Table values and string
+function parameters/returns are not implemented yet.
 
 ## Performance baselines
 
