@@ -14,6 +14,11 @@ COMPARE_OPS = {
 
 ARITH_OPS = {'+': 'ADD', '-': 'SUB', '*': 'MUL', '/': 'DIV', '%': 'MOD'}
 
+ARRAY_CONSTRUCTORS = {
+    'byte_array': ('DB', 1),
+    'word_array': ('DW', 4),
+}
+
 
 def asm_escape(value: str) -> str:
     simple = {'\\': '\\\\', '"': '\\"', '\n': '\\n', '\r': '\\r', '\t': '\\t'}
@@ -33,12 +38,15 @@ class Scope:
 
     def __init__(self):
         self.names: dict[str, int] = {}
+        self.arrays: dict[str, tuple[str, int, int]] = {}
         self.hidden_count = 0
         self.for_limits: dict[int, str] = {}
 
-    def declare(self, name: str) -> int:
+    def declare(self, name: str, array: tuple[str, int, int] | None = None) -> int:
         if name not in self.names:
             self.names[name] = len(self.names)
+        if array is not None:
+            self.arrays[name] = array
         return self.names[name]
 
     def index(self, name: str) -> int:
@@ -63,6 +71,7 @@ class Codegen:
         self.source_name = source_name
         self.lines: list[str] = []
         self.strings: dict[str, tuple[str, int]] = {}
+        self.arrays: list[tuple[str, str, int]] = []
         self.label_count = 0
         self.scope = Scope()
         self.in_function = False
@@ -93,6 +102,38 @@ class Codegen:
             label = f'__lua_str_{len(self.strings)}'
             self.strings[value] = (label, len(value))
         return self.strings[value][0]
+
+    def emit_array_alloc(self, call: nodes.Call) -> tuple[str, int, int]:
+        directive, width = ARRAY_CONSTRUCTORS[call.name]
+        if len(call.args) != 1 or not isinstance(call.args[0], nodes.Int):
+            raise CompileError(f'{call.name} requires a literal element count')
+        size = call.args[0].value
+        if size <= 0:
+            raise CompileError(f'{call.name} size must be positive')
+        label = f'__lua_arr_{len(self.arrays)}'
+        self.arrays.append((label, directive, size))
+        self.emit_instr(f'PUSH {label}')
+        return directive, width, size
+
+    def array_descriptor(self, base) -> tuple[str, int, int]:
+        if isinstance(base, nodes.Var) and base.name in self.scope.arrays:
+            return self.scope.arrays[base.name]
+        raise CompileError('indexing requires a byte_array or word_array local')
+
+    def check_index(self, index, size: int) -> None:
+        if isinstance(index, nodes.Int) and not 0 <= index.value < size:
+            raise CompileError(f'array index {index.value} out of range 0..{size - 1}')
+
+    def emit_index_address(self, index: nodes.Index) -> tuple[str, int]:
+        directive, width, size = self.array_descriptor(index.base)
+        self.check_index(index.index, size)
+        self.emit_num(index.base)
+        self.emit_num(index.index)
+        if width == 4:
+            self.emit_instr('PUSH 4')
+            self.emit_instr('MUL')
+        self.emit_instr('ADD')
+        return directive, width
 
     def collect(self, statements: list, scope: Scope) -> None:
         for statement in statements:
@@ -148,7 +189,13 @@ class Codegen:
         elif isinstance(expr, nodes.Var):
             self.emit_instr(f'LOCAL_GET {self.scope.index(expr.name)}')
         elif isinstance(expr, nodes.Call):
-            self.emit_call(expr, keep_result=True)
+            if expr.name in ARRAY_CONSTRUCTORS:
+                self.emit_array_alloc(expr)
+            else:
+                self.emit_call(expr, keep_result=True)
+        elif isinstance(expr, nodes.Index):
+            _, width = self.emit_index_address(expr)
+            self.emit_instr('LOAD8' if width == 1 else 'LOAD32')
         elif isinstance(expr, nodes.Unary):
             self.emit_instr('PUSH 0')
             self.emit_num(expr.operand)
@@ -177,9 +224,26 @@ class Codegen:
             self.emit_instr('RET')
             return
 
-        if isinstance(statement, (nodes.Local, nodes.Assign)):
+        if isinstance(statement, nodes.Local):
+            array = None
+            if (isinstance(statement.expr, nodes.Call) and
+                    statement.expr.name in ARRAY_CONSTRUCTORS):
+                array = self.emit_array_alloc(statement.expr)
+            else:
+                self.emit_num(statement.expr)
+            self.scope.declare(statement.name, array)
+            self.emit_instr(f'LOCAL_SET {self.scope.index(statement.name)}')
+            return
+
+        if isinstance(statement, nodes.Assign):
             self.emit_num(statement.expr)
             self.emit_instr(f'LOCAL_SET {self.scope.index(statement.name)}')
+            return
+
+        if isinstance(statement, nodes.AssignIndex):
+            self.emit_num(statement.expr)
+            _, width = self.emit_index_address(statement.target)
+            self.emit_instr('STORE8' if width == 1 else 'STORE32')
             return
 
         if isinstance(statement, nodes.Print):
@@ -295,6 +359,15 @@ class Codegen:
         for statement in self.program:
             if isinstance(statement, nodes.Function):
                 self.emit_function(statement)
+
+        if self.arrays:
+            self.emit()
+            for label, directive, size in self.arrays:
+                if directive == 'DW':
+                    self.emit('ALIGN 4')
+                self.emit(f'{label}:')
+                for _ in range(size):
+                    self.emit_instr(f'{directive} 0')
 
         if self.strings:
             self.emit()

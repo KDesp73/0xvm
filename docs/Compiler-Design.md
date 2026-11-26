@@ -16,18 +16,19 @@ committed on its own before the next one starts.
 - Locals and assignment: `local x = expr`, `x = expr`.
 - Control flow: `if`/`else`, `while`, numeric `for` with an implicit step of `1`.
 - Functions with parameters, locals, `return`, forward calls, and recursion.
+- Static byte/word arrays with literal or dynamic indices.
 - Output: `print(integer_expr)` and `print("string literal")`.
 - Static string literals are emitted as `(address, length)` buffers.
 
-Not supported yet: arrays, memory access, heap allocation, bitwise operations,
-device I/O, string values, modules, or Lua source-line mapping.
+Not supported yet: heap allocation, bitwise operations, device I/O, string
+values, modules, or Lua source-line mapping.
 
 ## Work items
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 1 | Functions with parameters, returns, and scopes | Done | `CALL`/`RET` ABI, arguments via `PICK`, caller cleanup, recursion. |
-| 2 | Arrays/byte buffers and indexing | Pending | `a[i]`, `LOAD8`/`STORE8`, `LOAD32`/`STORE32`. |
+| 2 | Arrays/byte buffers and indexing | Done | `a[i]`, `LOAD8`/`STORE8`, `LOAD32`/`STORE32`. |
 | 3 | Heap allocation and pointers | Pending | `alloc(n)`, pointer arithmetic, `FREE`. |
 | 4 | Bitwise operators and hex literals | Pending | `&`, `|`, `~`, `<<`, `>>`, `0x...`. |
 | 5 | Static data declarations | Pending | `const`, byte/word arrays, `DB`/`DW`/`DQ` emission. |
@@ -238,3 +239,5 @@ skip or exit without flag variables.
   `ec42e21`.
 - **Item 1** — functions with parameters, returns, scopes, forward calls, and
   recursion; golden fixture `tests/lua/functions.lua`.
+- **Item 2** — static byte/word arrays, indexing, and compile-time bounds
+  checks; golden fixture `tests/lua/arrays.lua`.

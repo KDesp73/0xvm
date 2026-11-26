@@ -21,7 +21,7 @@ KEYWORDS = {
 }
 
 TWO_CHAR_OPS = {'==', '~=', '<=', '>='}
-ONE_CHAR_OPS = set('=+-*/%(),<>')
+ONE_CHAR_OPS = set('=+-*/%(),<>[]')
 
 
 def _unescape(text: str, line: int) -> str:

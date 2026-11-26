@@ -128,7 +128,14 @@ class Parser:
             name = self.advance().text
             if self.accept('OP', '('):
                 return nodes.Call(name, self.parse_args())
+            target = nodes.Var(name)
+            while self.accept('OP', '['):
+                index = self.parse_expr()
+                self.expect('OP', ']')
+                target = nodes.Index(target, index)
             self.expect('OP', '=')
+            if isinstance(target, nodes.Index):
+                return nodes.AssignIndex(target, self.parse_expr())
             return nodes.Assign(name, self.parse_expr())
 
         token = self.peek()
@@ -167,15 +174,22 @@ class Parser:
     def parse_primary(self):
         token = self.peek()
         if self.accept('INT'):
-            return nodes.Int(token.value)
-        if self.accept('STRING'):
-            return nodes.Str(token.value)
-        if self.accept('IDENT'):
+            node = nodes.Int(token.value)
+        elif self.accept('STRING'):
+            node = nodes.Str(token.value)
+        elif self.accept('IDENT'):
             if self.accept('OP', '('):
-                return nodes.Call(token.text, self.parse_args())
-            return nodes.Var(token.text)
-        if self.accept('OP', '('):
+                node = nodes.Call(token.text, self.parse_args())
+            else:
+                node = nodes.Var(token.text)
+        elif self.accept('OP', '('):
             node = self.parse_expr()
             self.expect('OP', ')')
-            return node
-        raise CompileError(f'line {token.line}: expected expression, got {token.text}')
+        else:
+            raise CompileError(f'line {token.line}: expected expression, got {token.text}')
+
+        while self.accept('OP', '['):
+            index = self.parse_expr()
+            self.expect('OP', ']')
+            node = nodes.Index(node, index)
+        return node

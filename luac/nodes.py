@@ -38,6 +38,12 @@ class Call:
 
 
 @dataclass
+class Index:
+    base: object
+    index: object
+
+
+@dataclass
 class Local:
     name: str
     expr: object
@@ -46,6 +52,12 @@ class Local:
 @dataclass
 class Assign:
     name: str
+    expr: object
+
+
+@dataclass
+class AssignIndex:
+    target: Index
     expr: object
 
 

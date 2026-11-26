@@ -113,6 +113,47 @@ class LuacTests(unittest.TestCase):
                 'bad.lua',
             )
 
+    def test_lexer_accepts_index_brackets(self):
+        tokens = tokenize('a[0] = 1')
+        self.assertEqual([t.text for t in tokens],
+                         ['a', '[', '0', ']', '=', '1', '<eof>'])
+
+    def test_parser_builds_index_nodes(self):
+        program = Parser.from_source(
+            'local a = byte_array(2)\na[1] = 7\nprint(a[0])'
+        ).parse_program()
+        self.assertIsInstance(program[0].expr, nodes.Call)
+        self.assertIsInstance(program[1], nodes.AssignIndex)
+        self.assertIsInstance(program[1].target, nodes.Index)
+        self.assertIsInstance(program[2].expr, nodes.Index)
+
+    def test_codegen_emits_array_data_and_accesses(self):
+        asm = compile_source(
+            'local b = byte_array(2)\n'
+            'b[0] = 1\n'
+            'print(b[0])\n'
+            'local w = word_array(2)\n'
+            'w[1] = -1\n'
+            'print(w[1])',
+            'arr.lua',
+        )
+        self.assertIn('PUSH __lua_arr_0', asm)
+        self.assertIn('STORE8', asm)
+        self.assertIn('LOAD8', asm)
+        self.assertIn('__lua_arr_0:\n    DB 0\n    DB 0', asm)
+        self.assertIn('ALIGN 4\n__lua_arr_1:', asm)
+        self.assertIn('PUSH 4\n    MUL', asm)
+        self.assertIn('STORE32', asm)
+        self.assertIn('LOAD32', asm)
+
+    def test_static_array_bounds_are_checked(self):
+        with self.assertRaises(CompileError):
+            compile_source('local a = byte_array(2)\nprint(a[2])', 'bad.lua')
+
+    def test_indexing_non_array_is_rejected(self):
+        with self.assertRaises(CompileError):
+            compile_source('local x = 1\nprint(x[0])', 'bad.lua')
+
 
 if __name__ == '__main__':
     unittest.main()
