@@ -64,21 +64,18 @@
 
     canvas:focus-visible { outline: 1px solid var(--p3); outline-offset: 1px; }
 
-    .caption, .keys {
+    .caption {
       max-width: 640px;
       margin: 8px 0 0;
       color: var(--p1);
       font-size: 11px;
     }
 
-    .keys { margin-top: 16px; }
-    .keys b { font-weight: 400; color: var(--p3); }
+    .caption b { color: var(--p3); font-weight: 400; }
 
     .side { min-width: 0; }
     .row { display: flex; gap: 8px; margin-bottom: 16px; }
     .block { margin-bottom: 24px; }
-
-    button, input { font: inherit; }
 
     button {
       padding: 4px 8px;
@@ -87,11 +84,12 @@
       border: 1px solid var(--p2);
       border-radius: 0;
       cursor: pointer;
+      font: inherit;
     }
 
-    button:hover:not(:disabled) { border-color: var(--p3); }
-    button:focus-visible:not(:disabled) { outline: 1px solid var(--p3); outline-offset: 1px; }
-    button:disabled { opacity: .5; cursor: default; }
+    .row button { flex: 1; }
+    #load { display: block; width: 100%; }
+    #rom { display: none; }
 
     button.primary {
       color: var(--p0);
@@ -99,39 +97,16 @@
       border-color: var(--p3);
     }
 
-    label, .block-title {
+    button:hover { border-color: var(--p3); }
+    button:focus-visible { outline: 1px solid var(--p3); outline-offset: 1px; }
+    button:disabled { opacity: .5; cursor: default; }
+
+    .block-title {
       display: block;
       margin-bottom: 4px;
       color: var(--p1);
       font-size: 11px;
     }
-
-    #rom {
-      display: block;
-      width: 100%;
-      padding: 3px 4px;
-      color: var(--p1);
-      background: var(--p0);
-      border: 1px solid var(--p2);
-    }
-
-    .roms {
-      margin: 8px 0 0;
-      color: var(--p1);
-      font-size: 11px;
-    }
-
-    .rom-link {
-      padding: 0;
-      color: var(--p3);
-      background: none;
-      border: 0;
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-
-    .rom-link:hover:not(:disabled) { color: var(--p1); background: none; }
-    .rom-link[data-active="true"] { color: var(--p1); font-weight: 700; }
 
     .tty {
       height: 176px;
@@ -179,12 +154,7 @@
     <main class="layout">
       <section>
         <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
-        <p class="caption">screen <span id="screen-size">320 × 240</span> · pixel buffer</p>
-        <p class="keys">
-          <b>↑</b> <b>↓</b> <b>←</b> <b>→</b> move ·
-          <b>space</b> <b>enter</b> act ·
-          <b>esc</b> quit
-        </p>
+        <p class="caption">screen <span id="screen-size">320 × 240</span> · <b>esc</b> exit · pixel buffer</p>
       </section>
 
       <aside class="side">
@@ -194,15 +164,8 @@
         </div>
 
         <div class="block">
-          <label for="rom">rom file</label>
-          <input id="rom" type="file" accept=".rom,.bin">
-          <p class="roms">
-            load:
-            <button type="button" class="rom-link" data-rom="snake.rom">snake</button> ·
-            <button type="button" class="rom-link" data-rom="typography.rom">type</button> ·
-            <button type="button" class="rom-link" data-rom="lua-raycaster.rom">raycaster</button> ·
-            <button type="button" class="rom-link" data-rom="lua-typography.rom">lua type</button>
-          </p>
+          <button id="load" type="button">load file</button>
+          <input id="rom" type="file" accept=".rom,.bin" hidden>
         </div>
 
         <div class="block">
@@ -221,7 +184,7 @@
 
   <!-- Bump the query when the host scripts change so browsers do not keep an
        old key map (e.g. one without Backspace/Delete) after a rebuild. -->
-  <script src="0xvm-wasm.js?v=3"></script>
-  <script src="0xvm-app.js?v=3"></script>
+  <script src="0xvm-wasm.js?v=4"></script>
+  <script src="0xvm-app.js?v=4"></script>
 </body>
 </html>

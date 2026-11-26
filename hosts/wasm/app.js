@@ -17,17 +17,19 @@
     'VM_ERR_BAD_LOCAL'
   ];
 
+  const DEFAULT_ROM = 'boot.rom';
+
   const canvas = document.getElementById('screen');
   const ctx = canvas.getContext('2d');
   const consoleEl = document.getElementById('console');
   const statusEl = document.getElementById('status');
   const runBtn = document.getElementById('run');
   const resetBtn = document.getElementById('reset');
+  const loadBtn = document.getElementById('load');
   const romInput = document.getElementById('rom');
   const inputForm = document.getElementById('input-form');
   const consoleInput = document.getElementById('console-input');
   const screenSizeEl = document.getElementById('screen-size');
-  const quickButtons = Array.from(document.querySelectorAll('[data-rom]'));
 
   let startMs = performance.now();
   let currentR = 0;
@@ -162,19 +164,18 @@
 
     let running = false;
     let romBytes = null;
+    let romName = '';
 
     function load(bytes, name) {
       running = false;
       romBytes = bytes;
+      romName = name;
       api.init(320, 240);
       consoleEl.textContent = '';
       const st = api.load(bytes, bytes.length);
       setStatus(`${name}: ${STATUS_NAMES[st] || 'UNKNOWN'}`, statusState(st));
       running = st === 0;
       runBtn.textContent = running ? 'Pause' : 'Run';
-      for (const button of quickButtons) {
-        button.dataset.active = String(button.dataset.rom === name);
-      }
       canvas.focus();
     }
 
@@ -193,15 +194,14 @@
       if (running) {
         const st = api.run(250000);
         if (st === 0) {
-          setStatus(`Running · ${api.ticks()} ticks`, 'running');
+          setStatus(`${romName} · Running · ${api.ticks()} ticks`, 'running');
         } else {
           running = false;
           runBtn.textContent = 'Run';
           const state = statusState(st);
+          const label = STATUS_NAMES[st] || st;
           setStatus(
-            state === 'error'
-              ? `ERROR ${STATUS_NAMES[st] || st} · ${api.ticks()} ticks`
-              : `${STATUS_NAMES[st]} · ${api.ticks()} ticks`,
+            `${romName} · ${state === 'error' ? 'ERROR ' : ''}${label} · ${api.ticks()} ticks`,
             state
           );
         }
@@ -217,18 +217,16 @@
       runBtn.textContent = running ? 'Pause' : 'Run';
     });
     resetBtn.addEventListener('click', () => {
-      if (romBytes) load(romBytes, 'Restart');
+      if (romBytes) load(romBytes, romName);
     });
 
+    loadBtn.addEventListener('click', () => romInput.click());
     romInput.addEventListener('change', async () => {
       const file = romInput.files && romInput.files[0];
       if (!file) return;
+      romInput.value = '';
       load(Array.from(new Uint8Array(await file.arrayBuffer())), file.name);
     });
-
-    for (const button of quickButtons) {
-      button.addEventListener('click', () => loadRomUrl(button.dataset.rom));
-    }
 
     inputForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -250,10 +248,10 @@
         event.preventDefault();
       }
     });
+
     window.addEventListener('beforeunload', () => api.quit());
 
-    const romUrl = new URLSearchParams(location.search).get('rom') || 'snake.rom';
-    await loadRomUrl(romUrl);
+    await loadRomUrl(DEFAULT_ROM);
 
     requestAnimationFrame(pump);
   }

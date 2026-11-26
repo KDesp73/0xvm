@@ -25,8 +25,14 @@ endif
 	@out=$$(./$(BUILD_DIR)/0xvm -f $(BOOT_ROM) 2>&1); \
 		printf '%s\n' "$$out" | grep -q 'VM_HALTED' || { printf '%s\n' "$$out"; exit 1; }; \
 		printf '%s\n' "$$out" | grep -q '▄▄▄' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'KDESP73' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'LICENSE        MIT' || { printf '%s\n' "$$out"; exit 1; }; \
 		printf '%s\n' "$$out" | grep -q 'VMIM VERSION' || { printf '%s\n' "$$out"; exit 1; }; \
-		printf '%s\n' "$$out" | grep -q 'HOUSE PALETTE' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'RAM BYTES      65536' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'CELL BITS      64' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'ADDRESS BITS   16' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'BYTE-ENCODED' || { printf '%s\n' "$$out"; exit 1; }; \
+		printf '%s\n' "$$out" | grep -q 'DEVICE PAGE' || { printf '%s\n' "$$out"; exit 1; }; \
 		printf '%s\n' "$$out" | grep -q 'Breach' && { printf '%s\n' "$$out"; exit 1; }; \
 		printf '%s\n' "$$out" | grep -q 'ERRO' && { printf '%s\n' "$$out"; exit 1; }; \
 		exit 0
