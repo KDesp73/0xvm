@@ -87,6 +87,8 @@ make bench-compare
 
 - [Host notes](hosts/README.md)
 - [Design language](docs/Design-Language.md)
+- [Assembly language](docs/Assembly-Language.md)
+- [Lua subset](docs/Lua-Subset.md)
 - [Machine contract](docs/Machine-Contract.md)
 - [VM implementation](docs/VM-Implementation.md)
 - [Compiler design](docs/Compiler-Design.md)
