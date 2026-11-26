@@ -69,6 +69,14 @@ TYPOGRAPHY_DIR = examples/typography
 TYPOGRAPHY_SRC = $(wildcard $(TYPOGRAPHY_DIR)/*.asm)
 TYPOGRAPHY_SMOKE_SRC = $(BUILD_DIR)/typography-smoke.asm
 TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
+LUAC_MODULES    = $(wildcard luac/*.py)
+PYPROJECT       = pyproject.toml
+PIP            ?= pip3
+LUA_SMOKE_SRC   = $(TEST_DIR)/lua/smoke.lua
+LUA_SMOKE_ASM   = $(BUILD_DIR)/lua-smoke.asm
+LUA_SMOKE_ROM   = $(BUILD_DIR)/lua-smoke.rom
+LUA_SMOKE_OUT   = $(BUILD_DIR)/lua-smoke-actual.txt
+LUA_SMOKE_EXPECTED = $(TEST_DIR)/lua/smoke.expected
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
 DEBUGGER_SCRIPT = $(TEST_DIR)/debugger.in
 DEBUGGER_EXPECTED = $(TEST_DIR)/debugger.expected
@@ -253,6 +261,28 @@ typography-check: $(TYPOGRAPHY_ROM) $(TYPOGRAPHY_SMOKE_ROM) $(SDL_HOST)
 		exit 0
 endif
 
+$(LUA_SMOKE_ASM): $(LUA_SMOKE_SRC) $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+	@echo "[INFO] Compiling Lua smoke source"
+	@python3 -m luac compile $< -o $@
+
+$(LUA_SMOKE_ROM): $(LUA_SMOKE_ASM) $(BUILD_DIR)/0xasm
+	@echo "[INFO] Assembling Lua smoke output"
+	@./$(BUILD_DIR)/0xasm -f $< -o $@
+
+.PHONY: lua-check
+lua-check: $(LUA_SMOKE_ROM) $(BUILD_DIR)/0xvm ## Compile and run the Lua subset smoke program
+	@echo "[RUN] Lua compiler front-end unit checks"
+	@python3 $(TEST_DIR)/test_luac.py
+	@echo "[RUN] Lua compiler smoke check"
+	@./$(BUILD_DIR)/0xvm -f $(LUA_SMOKE_ROM) 2>/dev/null \
+		| sed '/^\[INFO\] /d' > $(LUA_SMOKE_OUT)
+	@diff -u $(LUA_SMOKE_EXPECTED) $(LUA_SMOKE_OUT)
+
+.PHONY: luac-install
+luac-install: ## Install the 0xluac CLI in editable mode
+	@echo "[INFO] Installing 0xluac"
+	@$(PIP) install -e .
+
 .PHONY: conformance-check
 conformance-check: conformance $(BUILD_DIR)/0xvm ## Run the conformance ROM through the CLI host
 	@echo "[RUN] CLI conformance check"
@@ -272,6 +302,7 @@ test: $(TEST_BIN) $(BUILD_DIR)/0xvm ## Build and run the test app and conformanc
 	@echo "[RUN] 0xtest"
 	@$(TEST_BIN)
 	@$(MAKE) --no-print-directory conformance-check
+	@$(MAKE) --no-print-directory lua-check
 	@$(MAKE) --no-print-directory debugger-check
 	@$(MAKE) --no-print-directory snake-check
 	@$(MAKE) --no-print-directory typography-check

@@ -22,6 +22,8 @@ make wasm             # build the browser host (skipped when emcc is unavailable
 make wasm-check       # smoke-run Snake through the browser host under Node
 make bench            # run repeatable benchmarks to build/bench/last.json
 make bench-compare    # compare a fresh run with the committed baseline
+make lua-check        # compile and run the Lua-subset smoke program
+make luac-install     # install the 0xluac CLI in editable mode
 ```
 
 `make all` produces `build/lib0xvm.a` and `build/lib0xvm.so`, six tools
@@ -106,6 +108,37 @@ printf 'B-7\nhey\n' | ./build/0xvm -f build/conformance-v2.rom
 
 `make test` checks the same ROM through a fresh scripted host and runs the CLI
 diff automatically.
+
+## Lua-subset compiler
+
+The `luac/` package is an early compiler that emits `0xasm` text rather than a
+ROM, so the assembler still supplies labels and line mapping to `0xdb`. The
+first supported subset covers integer literals, string literals passed to
+`print`, locals and assignment, arithmetic and comparisons, `if`/`else`,
+`while`, and numeric `for` loops.
+
+Run it directly from the repository without installing anything:
+
+```sh
+python3 -m luac compile tests/lua/smoke.lua -o build/smoke.asm
+./build/0xasm -f build/smoke.asm -o build/smoke.rom
+./build/0xvm -f build/smoke.rom
+make lua-check    # front-end unit tests plus the golden program above
+```
+
+The package can also be installed as the `0xluac` command. The name avoids a
+collision with the `luac` compiler shipped with Lua:
+
+```sh
+pip3 install -e .
+0xluac compile tests/lua/smoke.lua -o build/smoke.asm
+```
+
+For a non-editable install, run `pip3 install .` instead, or use
+`make luac-install` for the editable form.
+
+Strings are static `(addr, length)` buffers; numbers are signed 64-bit cells.
+Functions, tables, and source-level line remapping are not implemented yet.
 
 ## Performance baselines
 
