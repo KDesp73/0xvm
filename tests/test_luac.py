@@ -240,6 +240,62 @@ class LuacTests(unittest.TestCase):
                             'SHR'):
             self.assertIn(instruction, asm)
 
+    def test_lexer_recognizes_const_and_data_braces(self):
+        tokens = tokenize('const table = bytes { 1, 0xFF }')
+        self.assertEqual([t.text for t in tokens],
+                         ['const', 'table', '=', 'bytes', '{', '1', ',',
+                          '0xFF', '}', '<eof>'])
+
+    def test_parser_builds_const_and_data_nodes(self):
+        program = Parser.from_source(
+            'const N = 2 + 3\nconst row = bytes { 1, N }'
+        ).parse_program()
+        self.assertIsInstance(program[0], nodes.Const)
+        self.assertEqual(program[0].expr.op, '+')
+        self.assertIsInstance(program[1].expr, nodes.Data)
+        self.assertEqual(program[1].expr.directive, 'DB')
+        self.assertEqual(len(program[1].expr.values), 2)
+
+    def test_codegen_emits_equ_and_initialized_data(self):
+        asm = compile_source(
+            'const N = 0xFF\n'
+            'const row = bytes { N, 2 }\n'
+            'const vals = words { 0x11223344, -1 }\n'
+            'const big = quads { -1 }\n'
+            'print(N)\n'
+            'print(row[0])\n'
+            'print(vals[0])\n'
+            'print(big[0])',
+            'data.lua',
+        )
+        self.assertIn('EQU N 255', asm)
+        self.assertIn('PUSH 255\n    PRINT', asm)
+        self.assertIn('__lua_data_0:\n    DB 255\n    DB 2', asm)
+        self.assertIn('DW 4386\n    DW 13124', asm)
+        self.assertIn('DW 65535\n    DW 65535', asm)
+        self.assertIn('ALIGN 8\n__lua_data_2:\n    DQ -1', asm)
+        self.assertIn('LOAD64', asm)
+
+    def test_const_cannot_be_reassigned(self):
+        with self.assertRaises(CompileError):
+            compile_source('const N = 1\nN = 2', 'bad.lua')
+
+    def test_const_initializer_must_be_constant(self):
+        with self.assertRaises(CompileError):
+            compile_source('local x = 1\nconst N = x', 'bad.lua')
+
+    def test_const_data_index_bounds_are_checked(self):
+        with self.assertRaises(CompileError):
+            compile_source('const row = bytes { 1, 2 }\nprint(row[2])',
+                           'bad.lua')
+
+    def test_const_in_function_is_rejected(self):
+        with self.assertRaises(CompileError):
+            compile_source(
+                'function f()\n const N = 1\n return N\nend',
+                'bad.lua',
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,6 +4,13 @@ from .lexer import CompileError, Token, tokenize
 from . import nodes
 
 
+DATA_DIRECTIVES = {
+    'bytes': 'DB',
+    'words': 'DW',
+    'quads': 'DQ',
+}
+
+
 class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
@@ -66,6 +73,11 @@ class Parser:
             name = self.expect('IDENT').text
             self.expect('OP', '=')
             return nodes.Local(name, self.parse_expr())
+
+        if self.accept('KEYWORD', 'const'):
+            name = self.expect('IDENT').text
+            self.expect('OP', '=')
+            return nodes.Const(name, self.parse_expr())
 
         if self.at('KEYWORD', 'print'):
             self.advance()
@@ -208,6 +220,14 @@ class Parser:
         elif self.accept('IDENT'):
             if self.accept('OP', '('):
                 node = nodes.Call(token.text, self.parse_args())
+            elif token.text in DATA_DIRECTIVES and self.accept('OP', '{'):
+                values = []
+                if not self.at('OP', '}'):
+                    values.append(self.parse_expr())
+                    while self.accept('OP', ','):
+                        values.append(self.parse_expr())
+                self.expect('OP', '}')
+                node = nodes.Data(DATA_DIRECTIVES[token.text], values)
             else:
                 node = nodes.Var(token.text)
         elif self.accept('OP', '('):

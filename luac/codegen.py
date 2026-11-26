@@ -23,15 +23,12 @@ BITWISE_OPS = {
 }
 
 
-def static_int(expr) -> int | None:
-    """Return a compile-time integer value, or None for a runtime expression."""
-    if isinstance(expr, nodes.Int):
-        return expr.value
-    if isinstance(expr, nodes.Unary) and expr.op == '-':
-        value = static_int(expr.operand)
-        return None if value is None else -value
-    return None
+MASK64 = (1 << 64) - 1
+INT64_MIN = -(1 << 63)
 
+DATA_WIDTHS = {'DB': 1, 'DW': 4, 'DQ': 8}
+LOAD_OPS = {1: 'LOAD8', 4: 'LOAD32', 8: 'LOAD64'}
+STORE_OPS = {1: 'STORE8', 4: 'STORE32', 8: 'STORE64'}
 
 ARRAY_CONSTRUCTORS = {
     'byte_array': ('DB', 1),
@@ -42,6 +39,20 @@ HEAP_CONSTRUCTORS = {
     'alloc_bytes': ('DB', 1),
     'alloc_words': ('DW', 4),
 }
+
+
+def wrap64(value: int) -> int:
+    """Match the VM's signed 64-bit arithmetic."""
+    value &= MASK64
+    return value if value < (1 << 63) else value - (1 << 64)
+
+
+def trunc_div(left: int, right: int) -> int:
+    """C-style integer division with the VM's INT64_MIN guard."""
+    if right == -1:
+        return INT64_MIN
+    quotient = abs(left) // abs(right)
+    return -quotient if (left < 0) != (right < 0) else quotient
 
 
 def asm_escape(value: str) -> str:
@@ -100,6 +111,9 @@ class Codegen:
         self.lines: list[str] = []
         self.strings: dict[str, tuple[str, int]] = {}
         self.arrays: list[tuple[str, str, int]] = []
+        self.constants: dict[str, int] = {}
+        self.static_data: dict[str, tuple[str, str, int]] = {}
+        self.data_items: list[tuple[str, str, list[int]]] = []
         self.label_count = 0
         self.scope = Scope()
         self.in_function = False
@@ -131,6 +145,105 @@ class Codegen:
             self.strings[value] = (label, len(value))
         return self.strings[value][0]
 
+    def const_value(self, expr) -> int | None:
+        """Fold an expression to an integer, or return None if it is runtime."""
+        if isinstance(expr, nodes.Int):
+            return expr.value
+        if isinstance(expr, nodes.Var) and expr.name in self.constants:
+            return self.constants[expr.name]
+        if isinstance(expr, nodes.Unary):
+            operand = self.const_value(expr.operand)
+            if operand is None:
+                return None
+            if expr.op == '-':
+                return wrap64(-operand)
+            if expr.op == '~':
+                return wrap64(~operand)
+            return None
+        if isinstance(expr, nodes.Binary):
+            left = self.const_value(expr.left)
+            right = self.const_value(expr.right)
+            if left is None or right is None:
+                return None
+            if expr.op == '+':
+                return wrap64(left + right)
+            if expr.op == '-':
+                return wrap64(left - right)
+            if expr.op == '*':
+                return wrap64(left * right)
+            if expr.op in ('/', '%'):
+                if right == 0:
+                    raise CompileError('division by zero in constant expression')
+                quotient = trunc_div(left, right)
+                return wrap64(quotient if expr.op == '/' else left - quotient * right)
+            if expr.op == '&':
+                return wrap64(left & right)
+            if expr.op == '|':
+                return wrap64(left | right)
+            if expr.op == '~':
+                return wrap64(left ^ right)
+            if expr.op == '<<':
+                return wrap64((left & MASK64) << (right & 63))
+            if expr.op == '>>':
+                return wrap64((left & MASK64) >> (right & 63))
+            comparisons = {
+                '==': left == right,
+                '~=': left != right,
+                '<': left < right,
+                '<=': left <= right,
+                '>': left > right,
+                '>=': left >= right,
+            }
+            if expr.op in comparisons:
+                return int(comparisons[expr.op])
+        return None
+
+    def require_const(self, expr, context: str) -> int:
+        value = self.const_value(expr)
+        if value is None:
+            raise CompileError(f'{context} requires a compile-time integer')
+        return value
+
+    def prepare_declarations(self, statements: list) -> None:
+        for statement in statements:
+            name = statement.name
+            if (name in self.constants or name in self.static_data or
+                    name in self.functions):
+                raise CompileError(f'duplicate constant {name!r}')
+            context = f'const {name!r}'
+            if isinstance(statement.expr, nodes.Data):
+                if not statement.expr.values:
+                    raise CompileError(f'{context} needs at least one data value')
+                values = [
+                    self.require_const(value, context)
+                    for value in statement.expr.values
+                ]
+                label = f'__lua_data_{len(self.data_items)}'
+                self.data_items.append((label, statement.expr.directive, values))
+                self.static_data[name] = (
+                    label, statement.expr.directive, len(values),
+                )
+            else:
+                self.constants[name] = self.require_const(statement.expr, context)
+
+    def ensure_mutable(self, name: str) -> None:
+        if name in self.constants or name in self.static_data:
+            raise CompileError(f'cannot assign to constant {name!r}')
+
+    def emit_data_value(self, directive: str, value: int) -> None:
+        if directive == 'DB':
+            if not -128 <= value <= 255:
+                raise CompileError(f'byte data value {value} out of range')
+            self.emit_instr(f'DB {value}')
+        elif directive == 'DW':
+            if not -(1 << 31) <= value <= (1 << 32) - 1:
+                raise CompileError(f'word data value {value} out of range')
+            word = value & 0xFFFFFFFF
+            self.emit_instr(f'DW {(word >> 16) & 0xFFFF}')
+            self.emit_instr(f'DW {word & 0xFFFF}')
+        else:
+            self.emit_instr(f'DQ {wrap64(value)}')
+
     def emit_array_alloc(
         self, call: nodes.Call
     ) -> tuple[str, int, int, int | None]:
@@ -151,7 +264,7 @@ class Codegen:
         directive, width = HEAP_CONSTRUCTORS[call.name]
         if len(call.args) != 1:
             raise CompileError(f'{call.name} expects one size argument')
-        count = static_int(call.args[0])
+        count = self.const_value(call.args[0])
         if count is not None and count <= 0:
             raise CompileError(f'{call.name} size must be positive')
         if count is None:
@@ -179,18 +292,22 @@ class Codegen:
     def pointer_descriptor(
         self, expr
     ) -> tuple[str, int, int | None, int | None] | None:
-        if isinstance(expr, nodes.Var) and expr.name in self.scope.arrays:
-            return self.scope.arrays[expr.name]
+        if isinstance(expr, nodes.Var):
+            if expr.name in self.scope.arrays:
+                return self.scope.arrays[expr.name]
+            if expr.name in self.static_data:
+                _, directive, count = self.static_data[expr.name]
+                return (directive, DATA_WIDTHS[directive], count, 0)
         if isinstance(expr, nodes.Binary) and expr.op in ('+', '-'):
             left = self.pointer_descriptor(expr.left)
             right = self.pointer_descriptor(expr.right)
             if expr.op == '+':
                 if left is not None and right is None:
-                    return self.shift_pointer(left, static_int(expr.right))
+                    return self.shift_pointer(left, self.const_value(expr.right))
                 if right is not None and left is None:
-                    return self.shift_pointer(right, static_int(expr.left))
+                    return self.shift_pointer(right, self.const_value(expr.left))
             if expr.op == '-' and left is not None and right is None:
-                delta = static_int(expr.right)
+                delta = self.const_value(expr.right)
                 return self.shift_pointer(left, None if delta is None else -delta)
         return None
 
@@ -204,12 +321,13 @@ class Codegen:
 
     def check_index(self, index, ref) -> None:
         _, width, count, offset = ref
-        if count is None or offset is None or not isinstance(index, nodes.Int):
+        index_value = self.const_value(index)
+        if count is None or offset is None or index_value is None:
             return
-        byte_offset = offset + index.value * width
+        byte_offset = offset + index_value * width
         if not 0 <= byte_offset < count * width:
             raise CompileError(
-                f'array index {index.value} out of range for pointer offset {offset}'
+                f'array index {index_value} out of range for pointer offset {offset}'
             )
 
     def emit_index_address(self, index: nodes.Index) -> tuple[str, int]:
@@ -218,8 +336,8 @@ class Codegen:
         directive, width, _, _ = ref
         self.emit_num(index.base)
         self.emit_num(index.index)
-        if width == 4:
-            self.emit_instr('PUSH 4')
+        if width > 1:
+            self.emit_instr(f'PUSH {width}')
             self.emit_instr('MUL')
         self.emit_instr('ADD')
         return directive, width
@@ -276,7 +394,13 @@ class Codegen:
         if isinstance(expr, nodes.Int):
             self.emit_instr(f'PUSH {expr.value}')
         elif isinstance(expr, nodes.Var):
-            self.emit_instr(f'LOCAL_GET {self.scope.index(expr.name)}')
+            name = expr.name
+            if name in self.constants:
+                self.emit_instr(f'PUSH {self.constants[name]}')
+            elif name in self.static_data:
+                self.emit_instr(f'PUSH {self.static_data[name][0]}')
+            else:
+                self.emit_instr(f'LOCAL_GET {self.scope.index(name)}')
         elif isinstance(expr, nodes.Call):
             if expr.name in ARRAY_CONSTRUCTORS:
                 self.emit_array_alloc(expr)
@@ -288,7 +412,7 @@ class Codegen:
                 self.emit_call(expr, keep_result=True)
         elif isinstance(expr, nodes.Index):
             _, width = self.emit_index_address(expr)
-            self.emit_instr('LOAD8' if width == 1 else 'LOAD32')
+            self.emit_instr(LOAD_OPS[width])
         elif isinstance(expr, nodes.Unary):
             if expr.op == '-':
                 self.emit_instr('PUSH 0')
@@ -313,6 +437,8 @@ class Codegen:
     def emit_statement(self, statement) -> None:
         if isinstance(statement, nodes.Function):
             raise CompileError('nested functions are not supported')
+        if isinstance(statement, nodes.Const):
+            raise CompileError('const declarations are only supported at top level')
 
         if isinstance(statement, nodes.Return):
             if not self.in_function:
@@ -325,6 +451,7 @@ class Codegen:
             return
 
         if isinstance(statement, nodes.Local):
+            self.ensure_mutable(statement.name)
             array = None
             if (isinstance(statement.expr, nodes.Call) and
                     statement.expr.name in ARRAY_CONSTRUCTORS):
@@ -340,6 +467,7 @@ class Codegen:
             return
 
         if isinstance(statement, nodes.Assign):
+            self.ensure_mutable(statement.name)
             self.emit_num(statement.expr)
             self.emit_instr(f'LOCAL_SET {self.scope.index(statement.name)}')
             array = self.pointer_descriptor(statement.expr)
@@ -352,7 +480,7 @@ class Codegen:
         if isinstance(statement, nodes.AssignIndex):
             self.emit_num(statement.expr)
             _, width = self.emit_index_address(statement.target)
-            self.emit_instr('STORE8' if width == 1 else 'STORE32')
+            self.emit_instr(STORE_OPS[width])
             return
 
         if isinstance(statement, nodes.Print):
@@ -459,13 +587,22 @@ class Codegen:
         self.in_function = False
 
     def generate(self) -> str:
+        self.prepare_declarations([
+            statement for statement in self.program
+            if isinstance(statement, nodes.Const)
+        ])
+
         self.emit(f'; Generated by luac from {self.source_name}')
         self.emit('INCLUDE "console.asm"')
+        if self.constants:
+            self.emit()
+            for name, value in self.constants.items():
+                self.emit(f'EQU {name} {value}')
         self.emit()
 
         top_statements = [
             statement for statement in self.program
-            if not isinstance(statement, nodes.Function)
+            if not isinstance(statement, (nodes.Function, nodes.Const))
         ]
         main_scope = Scope()
         self.collect(top_statements, main_scope)
@@ -480,14 +617,22 @@ class Codegen:
             if isinstance(statement, nodes.Function):
                 self.emit_function(statement)
 
-        if self.arrays:
+        if self.arrays or self.data_items:
             self.emit()
             for label, directive, size in self.arrays:
                 if directive == 'DW':
                     self.emit('ALIGN 4')
                 self.emit(f'{label}:')
                 for _ in range(size):
-                    self.emit_instr(f'{directive} 0')
+                    self.emit_data_value(directive, 0)
+            for label, directive, values in self.data_items:
+                if directive == 'DW':
+                    self.emit('ALIGN 4')
+                elif directive == 'DQ':
+                    self.emit('ALIGN 8')
+                self.emit(f'{label}:')
+                for value in values:
+                    self.emit_data_value(directive, value)
 
         if self.strings:
             self.emit()

@@ -17,11 +17,11 @@ class Token:
 
 KEYWORDS = {
     'local', 'print', 'if', 'then', 'else', 'end', 'while', 'do', 'for',
-    'function', 'return',
+    'function', 'return', 'const',
 }
 
 TWO_CHAR_OPS = {'==', '~=', '<=', '>=', '<<', '>>'}
-ONE_CHAR_OPS = set('=+-*/%(),<>[]&|~')
+ONE_CHAR_OPS = set('=+-*/%(),<>[]&|~{}')
 
 
 def _unescape(text: str, line: int) -> str:

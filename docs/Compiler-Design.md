@@ -19,6 +19,7 @@ committed on its own before the next one starts.
 - Static byte/word arrays with literal or dynamic indices.
 - Typed heap allocations, raw pointer offsets, and explicit `free`.
 - Bitwise `&`, `|`, `~` (XOR), unary `~` (NOT), `<<`, `>>`, and hex literals.
+- Top-level `const` values and initialized byte/word/quad data tables.
 - Output: `print(integer_expr)` and `print("string literal")`.
 - Static string literals are emitted as `(address, length)` buffers.
 
@@ -33,7 +34,7 @@ mapping.
 | 2 | Arrays/byte buffers and indexing | Done | `a[i]`, `LOAD8`/`STORE8`, `LOAD32`/`STORE32`. |
 | 3 | Heap allocation and pointers | Done | `alloc_bytes`/`alloc_words`, pointer offsets, `FREE`. |
 | 4 | Bitwise operators and hex literals | Done | `&`, `|`, binary `~`/unary `~`, `<<`, `>>`, `0x...`. |
-| 5 | Static data declarations | Pending | `const`, byte/word arrays, `DB`/`DW`/`DQ` emission. |
+| 5 | Static data declarations | Done | `const`, `bytes`/`words`/`quads` tables, `EQU`/`DB`/`DW`/`DQ`. |
 | 6 | Device/runtime intrinsics | Pending | Screen, controller, timer, sleep port. |
 | 7 | Strings as values and string library bindings | Pending | String variables, `STRLENZ`, `PRINT_STR`, indexing/slicing. |
 | 8 | Modules/includes | Pending | Split source files sharing constants, data, and functions. |
@@ -153,15 +154,25 @@ arithmetic and comparisons matches Lua.
 
 ```lua
 const FRAME_MS = 66
+const BASE = 0x100
 const glyphs = bytes { 0x88, 0x88, 0xC8, 0xB0 }
+const offsets = words { BASE, BASE + 2 }
+const rows = quads { 0x0102030405060708, -1 }
 ```
 
-**Design.** Collect constants into `EQU` directives and arrays into `DB`/`DW`/
-`DQ` labels. Strings continue to use `STR` labels. Data is emitted after code
-so the assembler's entry `JMP` still skips it.
+**Design.** Top-level constants are folded with the VM's 64-bit arithmetic and
+emitted as `EQU` directives. Initialized tables get labels and are emitted with
+`DB`, `DW`, or `DQ`. Because the assembler's `DW` is a 16-bit directive while
+`LOAD32` reads four bytes, each compiler word becomes two `DW` halves in
+big-endian order; quadwords use `DQ`. Strings continue to use `STR` labels.
+Const table names behave like array pointers, support `name[i]`, and carry the
+same compile-time bounds checks. Declarations must appear before use, and
+constants cannot be reassigned. Data is emitted after code so the assembler's
+entry `JMP` still skips it.
 
-**Acceptance.** Constants are usable in expressions; byte and quadword arrays
-are emitted with correct big-endian layout and labels are referenceable.
+**Acceptance.** Constants are usable in expressions and data initializers;
+byte, word, and quadword tables are emitted with correct big-endian layout;
+labels are referenceable and indexable.
 
 ### 6. Device/runtime intrinsics
 
@@ -260,3 +271,6 @@ skip or exit without flag variables.
   `free`; golden fixture `tests/lua/heap.lua`.
 - **Item 4** — shifts, bitwise AND/OR/XOR/NOT, hex literals, and Lua
   precedence; golden fixture `tests/lua/bitops.lua`.
+- **Item 5** — `EQU` constants and initialized byte/word/quad data tables;
+  golden fixture `tests/lua/data.lua`. Also corrected static word arrays to
+  reserve four bytes per element.

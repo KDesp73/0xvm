@@ -14,6 +14,18 @@ class Str:
 
 
 @dataclass
+class Data:
+    directive: str
+    values: list
+
+
+@dataclass
+class Const:
+    name: str
+    expr: object
+
+
+@dataclass
 class Var:
     name: str
 
