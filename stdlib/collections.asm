@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Arena-backed collections. These are opt-in source macros; each routine uses
 ; CALL/RET frames and cleans up its arguments. Keys and vector cells are plain
 ; 64-bit integers, so no guest-side tagged values are needed. This file is

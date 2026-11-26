@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Heap coverage for 0xluac: allocation, typed indexing, pointer arithmetic,
 -- runtime sizes, and explicit release.
 local text = alloc_bytes(4)

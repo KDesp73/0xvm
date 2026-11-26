@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Horizontal and vertical line helpers.
 ; Included by ../typography.asm.
 

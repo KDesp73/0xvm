@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Function coverage for 0xluac: forward calls, recursion, nested calls,
 -- statement calls, and function-local variables.
 print(forty_two())

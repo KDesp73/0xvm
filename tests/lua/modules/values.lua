@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 const BASE = 10
 const row = bytes { 2, 4, 6 }
 local label = "MODULES"

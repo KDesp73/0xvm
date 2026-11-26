@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Raw memory helpers. These are opt-in source macros over LOAD*/STORE*; they
 ; do not allocate and never touch the heap pointer. This file is idempotent.
 ;

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Unit checks for the Lua-subset compiler front end."""
 
 import sys

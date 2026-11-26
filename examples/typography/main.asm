@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Startup and main loop for the typography demo.
 ; Included by ../typography.asm.
 

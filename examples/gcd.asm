@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Euclidean GCD using integer remainder and the extended comparison ops.
 ;
 ; The two operands live in the addressable zero page:

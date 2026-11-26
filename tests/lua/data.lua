@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Static data coverage for 0xluac: EQU constants, initialized byte/word/quad
 -- tables, big-endian layout, and constant expressions.
 const FRAME_MS = 66

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Bitwise coverage for 0xluac: hex literals, shifts, AND/OR/XOR, unary NOT,
 -- and C-like precedence relative to arithmetic and comparisons.
 print(0x30 & 0x3C)

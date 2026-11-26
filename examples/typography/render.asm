@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Frame rendering for the typography demo.
 ; Included by ../typography.asm.
 

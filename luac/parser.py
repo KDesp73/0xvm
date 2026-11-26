@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Recursive-descent parser for the supported Lua subset."""
 
 from .lexer import CompileError, Token, tokenize

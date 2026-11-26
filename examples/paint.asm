@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; =============================================================================
 ; Paint — an interactive demo for the SDL3 host (0xvm-sdl).
 ;

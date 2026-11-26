@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Scaled glyph drawing for the typography demo.
 ; Included by ../typography.asm.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Top-level Makefile for the stack VM.
 # Configuration and rules live in focused files under make/.
 .DEFAULT_GOAL := help

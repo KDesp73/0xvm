@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tokenizer for the supported Lua subset."""
 
 from dataclasses import dataclass

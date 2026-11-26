@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Shared paths, tool detection, flags, and ROM locations.
 # Included by the top-level Makefile.
 

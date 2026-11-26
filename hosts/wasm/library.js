@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /* Emscripten JS library for the browser host. The page installs
  * globalThis.__0xvmHost with screen/console callbacks before starting the VM. */
 

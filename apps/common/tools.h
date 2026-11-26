@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #ifndef APPS_COMMON_TOOLS_H
 #define APPS_COMMON_TOOLS_H
 

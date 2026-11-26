@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; 5x8 bitmap font for printable ASCII 32..126.
 ; Included by ../typography.asm.
 

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Control flow and source-map fixture
 local total = 0
 local i = 1

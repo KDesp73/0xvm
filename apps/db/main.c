@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #include "db.h"
 
 #define CLI_IMPLEMENTATION

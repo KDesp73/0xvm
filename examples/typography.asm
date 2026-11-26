@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; =============================================================================
 ; Type — a graphical typography demo for the SDL3 and browser hosts.
 ;

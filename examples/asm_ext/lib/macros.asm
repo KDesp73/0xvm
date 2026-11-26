@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Reusable macros. This file also pulls in a sibling include, so the demo
 ; exercises nested relative INCLUDE paths.
 INCLUDE "constants.asm"

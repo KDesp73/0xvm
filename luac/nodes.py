@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Small AST nodes for the supported Lua subset."""
 
 from dataclasses import dataclass, field

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # SDL3 and browser/WASM host build and smoke-check targets.
 # Included by the top-level Makefile.
 

@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Explicit-length string helpers. A string is a byte buffer addressed as
 ; (addr, len); no NUL terminator is required. Numeric formatting stays in the
 ; Console ports. This file is idempotent.

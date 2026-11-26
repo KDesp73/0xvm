@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Static strings used by the typography demo.
 ; Included by ../typography.asm.
 

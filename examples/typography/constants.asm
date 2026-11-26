@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Typography demo layout and key-code constants.
 ; Included by ../typography.asm.
 

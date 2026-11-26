@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- String values for 0xluac: (address, length) pairs, bindings, indexing,
 -- slicing, copying into a heap buffer, and multi-line text.
 local title = "0XVM TYPE"

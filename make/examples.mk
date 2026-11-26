@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Assembly-language example ROMs and their SDL smoke checks.
 # Included by the top-level Makefile.
 

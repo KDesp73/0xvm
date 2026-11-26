@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #ifndef TESTS_H
 #define TESTS_H
 

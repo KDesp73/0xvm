@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Profiling, benchmarks, and committed baseline comparisons.
 # Included by the top-level Makefile.
 

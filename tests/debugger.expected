@@ -1,21 +1,21 @@
 0xdb: loaded examples/gcd.asm (123 bytes)
--> 0x0100: JMP 0x0103  examples/gcd.asm:10
+-> 0x0100: JMP 0x0103  examples/gcd.asm:11
 Breakpoint 0 set at 0x0129.
 Stopped: breakpoint (ticks=7)
--> 0x0129: PUSH 4  <gcd_loop>  examples/gcd.asm:19
+-> 0x0129: PUSH 4  <gcd_loop>  examples/gcd.asm:20
 ip=0x0129 sp=0 fp=0 fsp=0 hp=0x4000 ticks=7 status=VM_OK
--> 0x0129: PUSH 4  <gcd_loop>  examples/gcd.asm:19
+-> 0x0129: PUSH 4  <gcd_loop>  examples/gcd.asm:20
 Stack is empty.
 0x0000: 0x0000042F
 0x0004: 0x000001CE
-0x0129: PUSH 4  <gcd_loop>  examples/gcd.asm:19
-0x0132: LOAD32  examples/gcd.asm:20
-0x0133: JMP_Z 0x016E  examples/gcd.asm:21
+0x0129: PUSH 4  <gcd_loop>  examples/gcd.asm:20
+0x0132: LOAD32  examples/gcd.asm:21
+0x0133: JMP_Z 0x016E  examples/gcd.asm:22
 All breakpoints deleted.
 Stopped: reached target address (ticks=61)
--> 0x016E: PUSH 0  <done>  examples/gcd.asm:41
+-> 0x016E: PUSH 0  <done>  examples/gcd.asm:42
 ip=0x016E sp=0 fp=0 fsp=0 hp=0x4000 ticks=61 status=VM_OK
--> 0x016E: PUSH 0  <done>  examples/gcd.asm:41
+-> 0x016E: PUSH 0  <done>  examples/gcd.asm:42
 21
 Stopped: VM_HALTED (ticks=65)
--> 0x017A: HALT  examples/gcd.asm:44
+-> 0x017A: HALT  examples/gcd.asm:45

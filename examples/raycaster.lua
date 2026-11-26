@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- A first-person raycaster written for the 0xluac subset.  It is a small
 -- maze explorer: arrows turn and walk, space and enter strafe, and escape
 -- quits.  Walls are drawn with integer DDA raycasting and a distance palette;

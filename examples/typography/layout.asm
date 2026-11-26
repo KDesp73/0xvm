@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Text layout and caret-position mapping.
 ; Included by ../typography.asm.
 

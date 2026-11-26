@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Accumulator demo: print 0..5, then print the total (60).
 ; Comments start with ';', '#', or '//'. Labels are byte addresses in RAM.
 ; The accumulator lives in the addressable zero page at byte address 0.

@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Stack arithmetic conveniences. All are plain macros over core opcodes.
 ; This file is idempotent.
 

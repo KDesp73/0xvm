@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Console device conveniences. Include ports.asm for the port names; every
 ; macro expands to the same DEI/DEO sequence as the former built-in pseudo-op.
 ; This file is idempotent.

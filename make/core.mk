@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Native build rules: libraries, tools, test runner, and dependency files.
 # Included by the top-level Makefile.
 

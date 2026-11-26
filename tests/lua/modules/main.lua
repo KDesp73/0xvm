@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 import "layout"
 
 print(total(3))

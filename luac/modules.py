@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Resolve, expand, and label ``import`` statements for the Lua subset."""
 
 from pathlib import Path

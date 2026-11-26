@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Short aliases for the local-variable opcodes. This file is idempotent.
 
 IFNDEF STD_LOCALS

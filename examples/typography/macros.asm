@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Small helper macros for the typography demo.
 ; Included by ../typography.asm.
 

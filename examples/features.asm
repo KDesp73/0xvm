@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Demonstrates constants/expressions, data directives, procedures with locals,
 ; floats, and host I/O.
 ;

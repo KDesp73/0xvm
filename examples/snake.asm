@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; =============================================================================
 ; Snake — the 0xvm flagship app for the SDL3 and browser hosts.
 ;

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Array coverage for 0xluac: byte/word storage, literal and dynamic indices,
 -- signed word values, and compile-time bounds checks.
 local bytes = byte_array(4)

@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Assembler-extension demo.
 ;
 ; Exercises:

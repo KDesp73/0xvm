@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Emit 0xasm source for the supported Lua subset."""
 
 from contextlib import contextmanager

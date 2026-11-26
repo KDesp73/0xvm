@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Heap helpers and a simple arena policy. The core ALLOC/FREE opcodes round to
 ; 8 bytes and reuse dead blocks; these macros add zeroing, arrays, and a
 ; bump-pointer arena backed by one core block. This file is idempotent.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #include "dis.h"
 
 #include <inttypes.h>

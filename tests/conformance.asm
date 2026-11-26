@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Executable conformance ROM for the frozen v2 machine.
 ; Each check jumps to `fail` on mismatch. A passing run prints a deterministic
 ; System/Console transcript and ends with a device halt. Hosts must provide the

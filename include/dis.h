@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #ifndef DIS_H
 #define DIS_H
 

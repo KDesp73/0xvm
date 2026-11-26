@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # 0xluac golden programs, Lua capstones, and Lua-specific checks.
 # Included by the top-level Makefile.
 

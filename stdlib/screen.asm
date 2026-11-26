@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Screen device conveniences (host-provided; see docs/Machine-Contract.md).
 ; Include this once; it pulls in ports.asm for the port constants.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #include "db.h"
 
 /* The compiler's `.lumap` sidecar maps generated assembly lines back to the

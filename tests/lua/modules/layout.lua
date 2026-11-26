@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 import "values"
 
 function total(x)

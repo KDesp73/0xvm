@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Test fixtures, scripted debugger checks, and the aggregate test target.
 # Included by the top-level Makefile.
 

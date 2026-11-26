@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Text-buffer insertion and deletion.
 ; Included by ../typography.asm.
 

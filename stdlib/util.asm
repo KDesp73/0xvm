@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Small scalar utilities. All are opt-in macros and use CALL/RET frames so
 ; arguments never leak onto the caller's stack. This file is idempotent.
 

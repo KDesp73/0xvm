@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- A typography demo written for the 0xluac subset.  This is the Lua
 -- counterpart of examples/typography.asm: arrows move the caret, printable
 -- keys (including space) insert at the caret, enter inserts a newline, and

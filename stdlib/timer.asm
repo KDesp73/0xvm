@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Timer device conveniences (host-provided).
 
 INCLUDE "ports.asm"

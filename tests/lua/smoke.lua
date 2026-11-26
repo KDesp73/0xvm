@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Exercises the first supported compiler subset.
 local a = 2
 local b = 3

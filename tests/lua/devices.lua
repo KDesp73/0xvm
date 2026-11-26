@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- Device intrinsic coverage for 0xluac. The CLI golden run keeps the device
 -- branch dormant; the smoke build flips ENABLE to 1 for SDL3 and WASM.
 const ENABLE = 0

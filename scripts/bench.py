@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 import argparse, json, math, os, statistics, subprocess, sys, tempfile, time
 from pathlib import Path
 

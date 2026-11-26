@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MIT
 ; Device port constants for the frozen v2 machine (see include/vm.h).
 ; This file is idempotent; include it directly when you only need port names.
 
