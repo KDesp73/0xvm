@@ -87,6 +87,16 @@ static int32_t rd32(const VmState *vm, uint16_t addr)
     return (int32_t)value;
 }
 
+/* Glyph records are stored bottom row first, each eight bytes per character. */
+static void read_glyph(Typo *t, char ch, uint8_t out[8])
+{
+    const AsmSymbol *glyphs = asm_symbol_by_name(t->program, "glyphs");
+    CHECK(glyphs != NULL);
+    if (!glyphs) return;
+    uint16_t addr = (uint16_t)(glyphs->value + (ch - 32) * 8);
+    for (unsigned i = 0u; i < 8u; i++) out[i] = t->vm.mem[addr + i];
+}
+
 /* Advance one demo frame: the key is consumed on the next main-loop pass. */
 static void press(Typo *t, int64_t key)
 {
@@ -147,6 +157,23 @@ static void test_editing(void)
         failures++;
         goto done;
     }
+
+    /* '6' must have an open tail and a bottom bowl, not a symmetric oval;
+     * lowercase 'n' is x-height and must not reuse the full-height 'N'. */
+    {
+        /* Records are stored top row last, so memory is the visual glyph
+         * reversed: '6' is an open top curl over a closed bottom bowl. */
+        static const uint8_t want6[8] = {0x70,0x88,0x88,0xF0,0x80,0x80,0x70,0x00};
+        static const uint8_t wantn[8] = {0x88,0x88,0xA8,0xA8,0xB0,0x00,0x00,0x00};
+        uint8_t six[8], lower[8], upper[8];
+        read_glyph(&t, '6', six);
+        read_glyph(&t, 'n', lower);
+        read_glyph(&t, 'N', upper);
+        CHECK(memcmp(six, want6, sizeof six) == 0);
+        CHECK(memcmp(lower, wantn, sizeof lower) == 0);
+        CHECK(memcmp(lower, upper, sizeof lower) != 0);
+    }
+
     press(&t, 0);               /* initial frame, no key */
 
     press(&t, 'A');
