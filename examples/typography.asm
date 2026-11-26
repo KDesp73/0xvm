@@ -859,6 +859,8 @@ draw_frame:
     LOAD32
     CMP_LT
     JMP_Z df_no_caret
+    ; Draw the caret in the two-pixel gutter immediately before the current
+    ; cell, so it sits between glyphs instead of on top of the next glyph.
     PUSH BORDER
     PUSH 1
     ADD
@@ -867,6 +869,9 @@ draw_frame:
     PUSH PIXEL_W
     MUL
     ADD
+    PUSH 2
+    SUB
+    DUP                     ; keep x for the second half of the caret
     PUSH BAR_H
     PUSH 1
     ADD
@@ -875,9 +880,26 @@ draw_frame:
     PUSH PIXEL_H
     MUL
     ADD
-    PUSH 124              ; '|'
+    PUSH PIXEL_H
     PUSH C_CARET
-    CALL draw_glyph
+    CALL vline
+    POP
+    POP
+    POP
+    POP
+    POP
+    INC                     ; x+1: fill the whole inter-cell gutter
+    PUSH BAR_H
+    PUSH 1
+    ADD
+    PUSH G_CY
+    LOAD32
+    PUSH PIXEL_H
+    MUL
+    ADD
+    PUSH PIXEL_H
+    PUSH C_CARET
+    CALL vline
     POP
     POP
     POP
