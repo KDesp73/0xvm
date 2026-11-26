@@ -2,18 +2,26 @@
 """Unit checks for the Lua-subset compiler front end."""
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from luac import nodes  # noqa: E402
-from luac.cli import compile_source  # noqa: E402
+from luac.cli import compile_file, compile_source  # noqa: E402
 from luac.lexer import CompileError, tokenize  # noqa: E402
 from luac.parser import Parser  # noqa: E402
 
 
 class LuacTests(unittest.TestCase):
+    @staticmethod
+    def write_source(directory: Path, name: str, text: str) -> Path:
+        path = directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
     def test_lexer_skips_comments_and_keeps_lines(self):
         tokens = tokenize('local x = 1 -- hi\nprint(x)\n')
         self.assertEqual([t.kind for t in tokens],
@@ -441,6 +449,89 @@ class LuacTests(unittest.TestCase):
                 'function f()\n return "x"\nend\nprint(f())',
                 'bad.lua',
             )
+
+    def test_lexer_recognizes_import(self):
+        tokens = tokenize('import "font"')
+        self.assertEqual([t.kind for t in tokens], ['KEYWORD', 'STRING', 'EOF'])
+        self.assertEqual(tokens[1].value, 'font')
+
+    def test_parser_builds_import_node(self):
+        statement = Parser.from_source('import "layout"').parse_program()[0]
+        self.assertIsInstance(statement, nodes.Import)
+        self.assertEqual(statement.path, 'layout')
+        self.assertEqual(statement.line, 1)
+
+    def test_compile_file_expands_nested_modules(self):
+        fixture = Path(__file__).resolve().parent / 'lua' / 'modules.lua'
+        asm = compile_file(fixture)
+        self.assertEqual(asm.count('    ENTER '), 3)
+        self.assertIn('EQU BASE 10', asm)
+        self.assertIn('__lua_fn_twice:', asm)
+        self.assertIn('__lua_fn_total:', asm)
+        self.assertIn('__lua_data_0:\n    DB 2\n    DB 4\n    DB 6', asm)
+        self.assertIn('__lua_str_0: STR "MODULES"', asm)
+        self.assertIn('__lua_str_1: STR "LAYOUT"', asm)
+
+    def test_import_with_lua_extension_is_resolved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_source(root, 'helper.lua', 'print("HELPER")')
+            main = self.write_source(root, 'main.lua', 'import "helper.lua"')
+            asm = compile_file(main)
+        self.assertIn('__lua_str_0: STR "HELPER"', asm)
+
+    def test_unresolved_import_is_rejected(self):
+        for source in ('import "x"',
+                       'function f()\n import "x"\n return 1\nend'):
+            with self.subTest(source=source), self.assertRaises(CompileError):
+                compile_source(source, 'bad.lua')
+
+    def test_missing_import_names_the_importing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            main = self.write_source(root, 'main.lua', 'import "nope"')
+            with self.assertRaises(CompileError) as caught:
+                compile_file(main)
+        self.assertIn('line 1', str(caught.exception))
+        self.assertIn('main.lua', str(caught.exception))
+        self.assertIn('not found', str(caught.exception))
+
+    def test_duplicate_import_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_source(root, 'helper.lua', 'print("A")')
+            main = self.write_source(
+                root, 'main.lua', 'import "helper"\nimport "helper"'
+            )
+            with self.assertRaises(CompileError) as caught:
+                compile_file(main)
+        self.assertIn('line 2', str(caught.exception))
+        self.assertIn('duplicate import', str(caught.exception))
+
+    def test_circular_import_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = self.write_source(root, 'a.lua', 'import "b"')
+            self.write_source(root, 'b.lua', 'import "a"')
+            with self.assertRaises(CompileError) as caught:
+                compile_file(first)
+        self.assertIn('circular import', str(caught.exception))
+        self.assertIn('a.lua -> b.lua -> a.lua', str(caught.exception))
+
+    def test_duplicate_symbol_across_modules_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_source(
+                root, 'helper.lua', 'function f()\n return 1\nend'
+            )
+            main = self.write_source(
+                root,
+                'main.lua',
+                'import "helper"\nfunction f()\n return 2\nend',
+            )
+            with self.assertRaises(CompileError) as caught:
+                compile_file(main)
+        self.assertIn('duplicate function', str(caught.exception))
 
 
 if __name__ == '__main__':

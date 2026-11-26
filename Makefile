@@ -72,8 +72,9 @@ TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
 LUAC_MODULES    = $(wildcard luac/*.py)
 PYPROJECT       = pyproject.toml
 PIP            ?= pip3
-LUA_CASES       = smoke functions arrays heap bitops data strings devices
+LUA_CASES       = smoke functions arrays heap bitops data strings modules devices
 LUA_SRCS        = $(foreach case,$(LUA_CASES),$(TEST_DIR)/lua/$(case).lua)
+LUA_MODULE_SRCS = $(wildcard $(TEST_DIR)/lua/modules/*.lua)
 LUA_ASMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).asm)
 LUA_ROMS        = $(foreach case,$(LUA_CASES),$(BUILD_DIR)/lua-$(case).rom)
 LUA_DEVICE_SMOKE_SRC = $(BUILD_DIR)/lua-devices-smoke.lua
@@ -262,7 +263,8 @@ typography-check: $(TYPOGRAPHY_ROM) $(TYPOGRAPHY_SMOKE_ROM) $(SDL_HOST)
 		exit 0
 endif
 
-$(BUILD_DIR)/lua-%.asm: $(TEST_DIR)/lua/%.lua $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
+$(BUILD_DIR)/lua-%.asm: $(TEST_DIR)/lua/%.lua $(LUA_MODULE_SRCS) \
+                        $(LUAC_MODULES) $(PYPROJECT) | $(BUILD_DIR)
 	@echo "[INFO] Compiling Lua source $*"
 	@python3 -m luac compile $< -o $@
 

@@ -28,9 +28,11 @@ committed on its own before the next one starts.
   `strchr`, and `strcpy` bindings are supported.
 - Output: `print(integer_expr)` and `print(string_expr)`.
 - Static string literals are emitted as `(address, length)` buffers.
+- Top-level `import "name"` loads `name.lua` relative to the importing file and
+  merges constants, data, functions, and top-level statements into one program.
 
-Not supported yet: string function parameters/returns, modules, or Lua
-source-line mapping.
+Not supported yet: string function parameters/returns or Lua source-line
+mapping.
 
 ## Work items
 
@@ -43,7 +45,7 @@ source-line mapping.
 | 5 | Static data declarations | Done | `const`, `bytes`/`words`/`quads` tables, `EQU`/`DB`/`DW`/`DQ`. |
 | 6 | Device/runtime intrinsics | Done | Screen, controller, timer macros; `DEO 0x41` sleep; SDL3/WASM smoke. |
 | 7 | Strings as values and string library bindings | Done | `(addr, len)` locals, stdlib bindings, read-only indexing, clamped slicing. |
-| 8 | Modules/includes | Pending | Split source files sharing constants, data, and functions. |
+| 8 | Modules/includes | Done | `import`, relative resolution, one-time expansion, merged symbols. |
 | 9 | Source-line mapping, `break`/`continue`, `elseif` | Pending | Debuggability and cleaner control flow for larger programs. |
 
 ### 1. Functions with parameters, returns, and scopes
@@ -252,13 +254,19 @@ import "font"
 import "layout"
 ```
 
-**Design.** Resolve imports relative to the source file, compile each module
-once, and merge symbol tables. Emit one `INCLUDE` per generated assembly file
-or concatenate modules into a single `.asm` while preserving label prefixes.
-Avoid duplicate `ENTER` frames across module boundaries.
+**Design.** `import "name"` is a top-level statement; the loader resolves
+`name.lua` relative to the importing file and splices the module's statements at
+the import point. Imports may nest, but each file may be imported only once and
+cycles are rejected. Constants, data tables, functions, and top-level locals
+share one symbol table, so modules can call each other's functions and use each
+other's constants. Everything is concatenated into one `.asm` with globally
+unique generated labels, so only the root program emits the main `ENTER` frame;
+each Lua function keeps its own frame. `compile_file` performs expansion, while
+the string-based `compile_source` helper rejects unresolved imports.
 
-**Acceptance.** A multi-file program compiles and runs; duplicate or missing
-imports are clear errors.
+**Acceptance.** A multi-file golden program imports a nested module, uses its
+constants, data, functions, and text, and runs through the CLI host. Missing,
+duplicate, and circular imports produce clear compile errors.
 
 ### 9. Source-line mapping, `break`/`continue`, `elseif`
 
@@ -300,3 +308,5 @@ skip or exit without flag variables.
   `tests/lua/devices.lua` plus SDL3/WASM device smoke runs.
 - **Item 7** — `(addr, len)` string locals, stdlib bindings, read-only indexing,
   and clamped slicing; golden fixture `tests/lua/strings.lua`.
+- **Item 8** — top-level `import`, relative module resolution, one-time
+  expansion, and merged symbol tables; golden fixture `tests/lua/modules.lua`.

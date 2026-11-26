@@ -26,6 +26,12 @@ class Const:
 
 
 @dataclass
+class Import:
+    path: str
+    line: int = 0
+
+
+@dataclass
 class Var:
     name: str
 

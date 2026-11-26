@@ -818,6 +818,11 @@ class Codegen:
     def emit_statement(self, statement) -> None:
         if isinstance(statement, nodes.Function):
             raise CompileError('nested functions are not supported')
+        if isinstance(statement, nodes.Import):
+            raise CompileError(
+                f'unresolved import {statement.path!r}; '
+                'imports must be expanded by compile_file'
+            )
         if isinstance(statement, nodes.Const):
             raise CompileError('const declarations are only supported at top level')
 

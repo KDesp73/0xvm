@@ -6,12 +6,21 @@ from pathlib import Path
 
 from .codegen import Codegen
 from .lexer import CompileError
+from .modules import load_program
 from .parser import Parser
 
 
 def compile_source(source: str, source_name: str) -> str:
+    """Compile an in-memory source string; imports require ``compile_file``."""
     program = Parser.from_source(source).parse_program()
     return Codegen(program, source_name).generate()
+
+
+def compile_file(source: str | Path) -> str:
+    """Compile a source file, expanding imports relative to that file."""
+    path = Path(source).resolve()
+    program = load_program(path)
+    return Codegen(program, path.name).generate()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
 
     source_path = Path(args.source)
     try:
-        asm = compile_source(source_path.read_text(), source_path.name)
+        asm = compile_file(source_path)
     except (CompileError, OSError) as err:
         print(f'0xluac: {err}', file=sys.stderr)
         return 1

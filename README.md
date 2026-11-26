@@ -117,9 +117,9 @@ supported subset covers integer literals, string values, locals and assignment,
 arithmetic and comparisons, `if`/`else`, `while`, numeric `for` loops, functions
 with parameters/returns/recursion, static byte/word arrays with indexing, typed
 heap allocations with pointer offsets, bitwise operators with hex literals,
-`const` values with initialized data tables, string bindings, and device
-intrinsics for the screen, controller, timer, and host sleep port. The roadmap
-for reaching a typography-level demo is in
+`const` values with initialized data tables, string bindings, top-level
+`import` modules, and device intrinsics for the screen, controller, timer, and
+host sleep port. The roadmap for reaching a typography-level demo is in
 [`docs/Compiler-Design.md`](docs/Compiler-Design.md).
 
 Run it directly from the repository without installing anything:
@@ -144,8 +144,10 @@ For a non-editable install, run `pip3 install .` instead, or use
 
 Strings are static `(addr, length)` buffers and string locals occupy two VM
 cells; numbers, function results, and heap addresses are signed 64-bit cells.
-Table values, string function parameters/returns, modules, and source-level line
-remapping are not implemented yet.
+Imports are resolved relative to the importing file and flattened into one
+assembly output; duplicate or circular imports are errors. Table values, string
+function parameters/returns, and source-level line remapping are not implemented
+yet.
 
 ## Performance baselines
 

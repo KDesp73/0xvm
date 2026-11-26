@@ -69,6 +69,10 @@ class Parser:
         return args
 
     def parse_statement(self):
+        if self.accept('KEYWORD', 'import'):
+            token = self.expect('STRING')
+            return nodes.Import(token.value, token.line)
+
         if self.accept('KEYWORD', 'local'):
             names = [self.expect('IDENT').text]
             while self.accept('OP', ','):
