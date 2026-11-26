@@ -113,13 +113,13 @@ diff automatically.
 
 The `luac/` package is an early compiler that emits `0xasm` text rather than a
 ROM, so the assembler still supplies labels and line mapping to `0xdb`. The
-supported subset covers integer literals, string literals passed to `print`,
-locals and assignment, arithmetic and comparisons, `if`/`else`, `while`,
-numeric `for` loops, functions with parameters/returns/recursion, static
-byte/word arrays with indexing, typed heap allocations with pointer offsets,
-bitwise operators with hex literals, `const` values with initialized data
-tables, and device intrinsics for the screen, controller, timer, and host sleep
-port. The roadmap for reaching a typography-level demo is in
+supported subset covers integer literals, string values, locals and assignment,
+arithmetic and comparisons, `if`/`else`, `while`, numeric `for` loops, functions
+with parameters/returns/recursion, static byte/word arrays with indexing, typed
+heap allocations with pointer offsets, bitwise operators with hex literals,
+`const` values with initialized data tables, string bindings, and device
+intrinsics for the screen, controller, timer, and host sleep port. The roadmap
+for reaching a typography-level demo is in
 [`docs/Compiler-Design.md`](docs/Compiler-Design.md).
 
 Run it directly from the repository without installing anything:
@@ -142,9 +142,10 @@ pip3 install -e .
 For a non-editable install, run `pip3 install .` instead, or use
 `make luac-install` for the editable form.
 
-Strings are static `(addr, length)` buffers; numbers, function results, and heap
-addresses are signed 64-bit cells. Table values, string variables, modules, and
-source-level line remapping are not implemented yet.
+Strings are static `(addr, length)` buffers and string locals occupy two VM
+cells; numbers, function results, and heap addresses are signed 64-bit cells.
+Table values, string function parameters/returns, modules, and source-level line
+remapping are not implemented yet.
 
 ## Performance baselines
 

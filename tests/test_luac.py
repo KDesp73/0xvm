@@ -40,9 +40,16 @@ class LuacTests(unittest.TestCase):
         self.assertIn(': STR "ok"', asm)
         self.assertIn('HALT', asm)
 
-    def test_string_assignment_is_rejected(self):
-        with self.assertRaises(CompileError):
-            compile_source('local s = "no"', 'bad.lua')
+    def test_string_assignment_uses_descriptor_pair(self):
+        asm = compile_source('local s = "ok"\nprint(s)', 'string.lua')
+        self.assertIn('ENTER 2', asm)
+        self.assertIn(
+            '    PUSH __lua_str_0\n    PUSH 2\n'
+            '    LOCAL_SET 1\n    LOCAL_SET 0',
+            asm,
+        )
+        self.assertIn('    LOCAL_GET 0\n    LOCAL_GET 1\n    PRINT_STR', asm)
+        self.assertIn('__lua_str_0: STR "ok"', asm)
 
     def test_lexer_recognizes_function_keywords(self):
         tokens = tokenize('function f(x)\n return x\nend')
@@ -353,6 +360,85 @@ class LuacTests(unittest.TestCase):
         with self.assertRaises(CompileError):
             compile_source(
                 'function draw()\n return 1\nend\nprint(draw())',
+                'bad.lua',
+            )
+
+    def test_codegen_emits_string_bindings(self):
+        asm = compile_source(
+            'local title = "0XVM"\n'
+            'print(title)\n'
+            'print(strlen(title))\n'
+            'print(title[0])\n'
+            'local part = slice(title, 1, 2)\n'
+            'print(part)\n'
+            'print_str(part)\n'
+            'print(strcmp(title, "0XVM"))\n'
+            'print(strfind(title, "X"))\n'
+            'print(strchr(title, 86))\n'
+            'local buf = alloc_bytes(2)\n'
+            'strcpy(buf, part)\n'
+            'free(buf)',
+            'strings.lua',
+        )
+        self.assertIn('INCLUDE "strings.asm"', asm)
+        self.assertIn('    ENTER 5', asm)
+        self.assertIn('    STRCMP\n    PRINT', asm)
+        self.assertIn('    STRFIND\n    PRINT', asm)
+        self.assertIn('    STRCHR\n    PRINT', asm)
+        self.assertIn('    STRCPY\n', asm)
+        self.assertIn(
+            '    LOCAL_GET 0\n    LOCAL_GET 1\n'
+            '    PUSH 0\n    SWAP\n    POP\n    ADD\n    LOAD8',
+            asm,
+        )
+        self.assertIn('__lua_str_0: STR "0XVM"', asm)
+
+    def test_slice_clamps_start_and_count(self):
+        asm = compile_source(
+            'local s = slice("0XVM TYPE", 5, 99)\nprint(strlen(s))',
+            'strings.lua',
+        )
+        for instruction in ('CMP_LT', 'CMP_LE', 'PICK', 'ROT', 'SWAP'):
+            self.assertIn(instruction, asm)
+        self.assertIn('    PUSH 5\n    SUB', asm)
+        self.assertIn('    PUSH 99', asm)
+
+    def test_string_value_cannot_be_used_as_integer(self):
+        for source in ('local s = "x"\nprint(s + 1)',
+                       'local n = 1\nn = "x"'):
+            with self.subTest(source=source), self.assertRaises(CompileError):
+                compile_source(source, 'bad.lua')
+
+    def test_string_variable_requires_string_assignment(self):
+        with self.assertRaises(CompileError):
+            compile_source('local s = "x"\ns = 1', 'bad.lua')
+
+    def test_string_index_is_bounds_checked_and_read_only(self):
+        with self.assertRaises(CompileError):
+            compile_source('local s = "abc"\nprint(s[3])', 'bad.lua')
+        with self.assertRaises(CompileError):
+            compile_source('local s = "abc"\ns[0] = 65', 'bad.lua')
+
+    def test_string_binding_arity_is_checked(self):
+        with self.assertRaises(CompileError):
+            compile_source('print(strlen("a", "b"))', 'bad.lua')
+
+    def test_void_string_binding_is_rejected_as_expression(self):
+        for source in ('local n = print_str("a")', 'print(strcpy(1, "a"))'):
+            with self.subTest(source=source), self.assertRaises(CompileError):
+                compile_source(source, 'bad.lua')
+
+    def test_slice_offsets_must_be_constant_and_nonnegative(self):
+        for source in ('local n = 1\nprint(slice("abc", n, 1))',
+                       'print(slice("abc", -1, 1))',
+                       'print(slice("abc", 0, -1))'):
+            with self.subTest(source=source), self.assertRaises(CompileError):
+                compile_source(source, 'bad.lua')
+
+    def test_string_return_values_are_rejected(self):
+        with self.assertRaises(CompileError):
+            compile_source(
+                'function f()\n return "x"\nend\nprint(f())',
                 'bad.lua',
             )
 

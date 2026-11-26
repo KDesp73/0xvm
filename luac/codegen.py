@@ -65,6 +65,22 @@ INTRINSIC_INCLUDE = {
 
 VALUE_INTRINSICS = {'read_key', 'quit_requested', 'now_ms'}
 
+STRING_BINDINGS = {
+    'print_str': 1,
+    'strlen': 1,
+    'strcmp': 2,
+    'slice': 3,
+    'strcpy': 2,
+    'strfind': 2,
+    'strchr': 2,
+}
+
+STRING_INCLUDE_BINDINGS = {
+    'strcmp', 'strcpy', 'strfind', 'strchr',
+}
+
+STRING_VOID_BINDINGS = {'print_str', 'strcpy'}
+
 
 def wrap64(value: int) -> int:
     """Match the VM's signed 64-bit arithmetic."""
@@ -94,29 +110,62 @@ def asm_escape(value: str) -> str:
 
 
 class Scope:
-    """Local slots for one function frame."""
+    """Local slots for one function frame; strings occupy an (addr, len) pair."""
 
     def __init__(self):
         self.names: dict[str, int] = {}
+        self.strings: dict[str, tuple[int, int]] = {}
+        self.string_lengths: dict[str, int] = {}
         self.arrays: dict[str, tuple[str, int, int | None, int | None]] = {}
         self.hidden_count = 0
         self.for_limits: dict[int, str] = {}
+        self.slot_count = 0
 
     def declare(
         self,
         name: str,
         array: tuple[str, int, int | None, int | None] | None = None,
     ) -> int:
+        if name in self.strings:
+            raise CompileError(f'cannot use string {name!r} as an integer')
         if name not in self.names:
-            self.names[name] = len(self.names)
+            self.names[name] = self.slot_count
+            self.slot_count += 1
         if array is not None:
             self.arrays[name] = array
         return self.names[name]
 
+    def declare_string(self, name: str, length: int | None = None) -> tuple[int, int]:
+        if name in self.names:
+            raise CompileError(f'cannot use integer {name!r} as a string')
+        if name not in self.strings:
+            addr = self.slot_count
+            self.strings[name] = (addr, addr + 1)
+            self.slot_count += 2
+        if length is not None:
+            self.string_lengths[name] = length
+        return self.strings[name]
+
     def index(self, name: str) -> int:
+        if name in self.strings:
+            raise CompileError(f'string {name!r} used as an integer')
         if name not in self.names:
             raise CompileError(f'unknown local {name!r}')
         return self.names[name]
+
+    def string_index(self, name: str) -> tuple[int, int]:
+        if name not in self.strings:
+            raise CompileError(f'{name!r} is not a string')
+        return self.strings[name]
+
+    def set_string_length(self, name: str, length: int | None) -> None:
+        if length is None:
+            self.string_lengths.pop(name, None)
+        else:
+            self.string_lengths[name] = length
+
+    def string_length(self, name: str) -> int | None:
+        return self.string_lengths.get(name)
 
     def hidden(self, prefix: str) -> str:
         self.hidden_count += 1
@@ -126,7 +175,7 @@ class Scope:
 
     @property
     def size(self) -> int:
-        return len(self.names)
+        return self.slot_count
 
 
 class Codegen:
@@ -175,6 +224,8 @@ class Codegen:
             include = INTRINSIC_INCLUDE.get(expr.name)
             if include:
                 self.includes.add(include)
+            if expr.name in STRING_INCLUDE_BINDINGS:
+                self.includes.add('strings.asm')
             for arg in expr.args:
                 self.scan_expr(arg)
         elif isinstance(expr, nodes.Unary):
@@ -278,6 +329,171 @@ class Codegen:
         self.emit_instr('SCREEN_SIZE')
         for name in reversed(statement.names):
             self.emit_instr(f'LOCAL_SET {self.scope.index(name)}')
+
+    def expr_is_string(self, expr) -> bool:
+        if isinstance(expr, nodes.Str):
+            return True
+        if isinstance(expr, nodes.Var):
+            return expr.name in self.scope.strings
+        if isinstance(expr, nodes.Call):
+            return expr.name == 'slice'
+        return False
+
+    def static_string_length(self, expr) -> int | None:
+        if isinstance(expr, nodes.Str):
+            return len(expr.value)
+        if isinstance(expr, nodes.Var):
+            return self.scope.string_length(expr.name)
+        if isinstance(expr, nodes.Call) and expr.name == 'slice':
+            if len(expr.args) != 3:
+                return None
+            start = self.const_value(expr.args[1])
+            count = self.const_value(expr.args[2])
+            source = self.static_string_length(expr.args[0])
+            if start is None or count is None or count < 0:
+                return None
+            if source is None:
+                return count
+            return max(0, min(count, source - max(0, start)))
+        return None
+
+    def emit_string_expr(self, expr) -> None:
+        """Push a string as an (address, length) pair."""
+        if isinstance(expr, nodes.Str):
+            label = self.intern_string(expr.value)
+            self.emit_instr(f'PUSH {label}')
+            self.emit_instr(f'PUSH {len(expr.value)}')
+            return
+        if isinstance(expr, nodes.Var):
+            addr, length = self.scope.string_index(expr.name)
+            self.emit_instr(f'LOCAL_GET {addr}')
+            self.emit_instr(f'LOCAL_GET {length}')
+            return
+        if isinstance(expr, nodes.Call) and expr.name == 'slice':
+            self.emit_slice(expr)
+            return
+        raise CompileError('expression does not produce a string')
+
+    def emit_string_assign(self, name: str, expr) -> None:
+        length = self.static_string_length(expr)
+        addr, length_slot = self.scope.string_index(name)
+        self.emit_string_expr(expr)
+        self.emit_instr(f'LOCAL_SET {length_slot}')
+        self.emit_instr(f'LOCAL_SET {addr}')
+        self.scope.set_string_length(name, length)
+
+    def emit_slice(self, call: nodes.Call) -> None:
+        if len(call.args) != 3:
+            raise CompileError('slice expects string, start, and count')
+        start = self.const_value(call.args[1])
+        count = self.const_value(call.args[2])
+        if start is None or count is None:
+            raise CompileError('slice start and count must be compile-time integers')
+        if start < 0 or count < 0:
+            raise CompileError('slice start and count must not be negative')
+
+        rem_nonneg = self.label('slice_rem')
+        use_count = self.label('slice_count')
+        have_len = self.label('slice_len')
+        use_start = self.label('slice_start')
+        have_offset = self.label('slice_offset')
+
+        # Stack: [addr, len]. Clamp to [max(0, len - start), count].
+        self.emit_string_expr(call.args[0])
+        self.emit_instr('DUP')
+        self.emit_instr(f'PUSH {start}')
+        self.emit_instr('SUB')
+        self.emit_instr('DUP')
+        self.emit_instr('PUSH 0')
+        self.emit_instr('CMP_LT')
+        self.emit_instr(f'JMP_Z {rem_nonneg}')
+        self.emit_instr('POP')
+        self.emit_instr('PUSH 0')
+        self.emit_instr(f'JMP {have_len}')
+        self.emit(rem_nonneg + ':')
+        self.emit_instr('DUP')
+        self.emit_instr(f'PUSH {count}')
+        self.emit_instr('CMP_LE')
+        self.emit_instr(f'JMP_Z {use_count}')
+        self.emit_instr(f'JMP {have_len}')
+        self.emit(use_count + ':')
+        self.emit_instr('POP')
+        self.emit_instr(f'PUSH {count}')
+        self.emit(have_len + ':')
+
+        # Stack: [addr, len, clamped]. Advance by min(start, len).
+        self.emit_instr('SWAP')
+        self.emit_instr('DUP')
+        self.emit_instr(f'PUSH {start}')
+        self.emit_instr('CMP_LE')
+        self.emit_instr(f'JMP_Z {use_start}')
+        self.emit_instr(f'JMP {have_offset}')
+        self.emit(use_start + ':')
+        self.emit_instr('POP')
+        self.emit_instr(f'PUSH {start}')
+        self.emit(have_offset + ':')
+        self.emit_instr('PUSH 2')
+        self.emit_instr('PICK')
+        self.emit_instr('ADD')
+        self.emit_instr('ROT')
+        self.emit_instr('POP')
+        self.emit_instr('SWAP')
+
+    def check_string_call(self, call: nodes.Call) -> None:
+        expected = STRING_BINDINGS.get(call.name)
+        if expected is None:
+            raise CompileError(f'not a string binding: {call.name!r}')
+        if len(call.args) != expected:
+            raise CompileError(
+                f'string binding {call.name!r} expects {expected} argument(s), '
+                f'got {len(call.args)}'
+            )
+
+    def emit_string_call(self, call: nodes.Call) -> None:
+        self.check_string_call(call)
+        name = call.name
+        if name == 'print_str':
+            self.emit_string_expr(call.args[0])
+            self.emit_instr('PRINT_STR')
+        elif name == 'strlen':
+            self.emit_string_expr(call.args[0])
+            self.emit_instr('SWAP')
+            self.emit_instr('POP')
+        elif name == 'strcmp':
+            self.emit_string_expr(call.args[0])
+            self.emit_string_expr(call.args[1])
+            self.emit_instr('STRCMP')
+        elif name == 'slice':
+            self.emit_slice(call)
+        elif name == 'strcpy':
+            self.emit_num(call.args[0])
+            self.emit_string_expr(call.args[1])
+            self.emit_instr('STRCPY')
+        elif name == 'strfind':
+            self.emit_string_expr(call.args[0])
+            self.emit_string_expr(call.args[1])
+            self.emit_instr('STRFIND')
+        elif name == 'strchr':
+            self.emit_string_expr(call.args[0])
+            self.emit_num(call.args[1])
+            self.emit_instr('STRCHR')
+        else:
+            raise CompileError(f'unhandled string binding {name!r}')
+
+    def emit_string_index(self, index: nodes.Index) -> None:
+        length = None
+        if isinstance(index.base, nodes.Var):
+            length = self.scope.string_length(index.base.name)
+        offset = self.const_value(index.index)
+        if length is not None and offset is not None:
+            if not 0 <= offset < length:
+                raise CompileError(f'string index {offset} out of range')
+        self.emit_string_expr(index.base)
+        self.emit_num(index.index)
+        self.emit_instr('SWAP')
+        self.emit_instr('POP')
+        self.emit_instr('ADD')
+        self.emit_instr('LOAD8')
 
     def intern_string(self, value: str) -> str:
         if value not in self.strings:
@@ -483,26 +699,37 @@ class Codegen:
         return directive, width
 
     def collect(self, statements: list, scope: Scope) -> None:
-        for statement in statements:
-            if isinstance(statement, nodes.Local):
-                scope.declare(statement.name)
-            elif isinstance(statement, nodes.LocalMulti):
-                for name in statement.names:
-                    scope.declare(name)
-            elif isinstance(statement, nodes.For):
-                scope.declare(statement.name)
-                scope.for_limits[id(statement)] = scope.hidden('for_limit')
-            elif isinstance(statement, nodes.If):
-                self.collect(statement.then_body, scope)
-                self.collect(statement.else_body, scope)
-            elif isinstance(statement, nodes.While):
-                self.collect(statement.body, scope)
-            elif isinstance(statement, nodes.Function):
-                raise CompileError('nested functions are not supported')
+        saved = self.scope
+        self.scope = scope
+        try:
+            for statement in statements:
+                if isinstance(statement, nodes.Local):
+                    if self.expr_is_string(statement.expr):
+                        scope.declare_string(
+                            statement.name,
+                            self.static_string_length(statement.expr),
+                        )
+                    else:
+                        scope.declare(statement.name)
+                elif isinstance(statement, nodes.LocalMulti):
+                    for name in statement.names:
+                        scope.declare(name)
+                elif isinstance(statement, nodes.For):
+                    scope.declare(statement.name)
+                    scope.for_limits[id(statement)] = scope.hidden('for_limit')
+                elif isinstance(statement, nodes.If):
+                    self.collect(statement.then_body, scope)
+                    self.collect(statement.else_body, scope)
+                elif isinstance(statement, nodes.While):
+                    self.collect(statement.body, scope)
+                elif isinstance(statement, nodes.Function):
+                    raise CompileError('nested functions are not supported')
+        finally:
+            self.scope = saved
 
     def require_numeric(self, expr) -> None:
-        if isinstance(expr, nodes.Str):
-            raise CompileError('strings are only supported as print arguments')
+        if self.expr_is_string(expr):
+            raise CompileError('string value used where an integer is required')
         if isinstance(expr, nodes.Unary):
             self.require_numeric(expr.operand)
         elif isinstance(expr, nodes.Binary):
@@ -553,11 +780,20 @@ class Codegen:
                 raise CompileError('free is a statement, not an expression')
             elif expr.name in INTRINSIC_ARITY:
                 self.emit_intrinsic_expr(expr)
+            elif expr.name in STRING_BINDINGS:
+                if expr.name == 'slice':
+                    raise CompileError('slice produces a string, not an integer')
+                if expr.name in STRING_VOID_BINDINGS:
+                    raise CompileError(f'{expr.name} does not produce a value')
+                self.emit_string_call(expr)
             else:
                 self.emit_call(expr, keep_result=True)
         elif isinstance(expr, nodes.Index):
-            _, width = self.emit_index_address(expr)
-            self.emit_instr(LOAD_OPS[width])
+            if self.expr_is_string(expr.base):
+                self.emit_string_index(expr)
+            else:
+                _, width = self.emit_index_address(expr)
+                self.emit_instr(LOAD_OPS[width])
         elif isinstance(expr, nodes.Unary):
             if expr.op == '-':
                 self.emit_instr('PUSH 0')
@@ -591,6 +827,8 @@ class Codegen:
             if statement.expr is None:
                 self.emit_instr('PUSH 0')
             else:
+                if self.expr_is_string(statement.expr):
+                    raise CompileError('string return values are not supported')
                 self.emit_num(statement.expr)
             self.emit_instr('RET')
             return
@@ -603,6 +841,13 @@ class Codegen:
 
         if isinstance(statement, nodes.Local):
             self.ensure_mutable(statement.name)
+            if self.expr_is_string(statement.expr):
+                self.scope.declare_string(
+                    statement.name,
+                    self.static_string_length(statement.expr),
+                )
+                self.emit_string_assign(statement.name, statement.expr)
+                return
             array = None
             if (isinstance(statement.expr, nodes.Call) and
                     statement.expr.name in ARRAY_CONSTRUCTORS):
@@ -619,6 +864,11 @@ class Codegen:
 
         if isinstance(statement, nodes.Assign):
             self.ensure_mutable(statement.name)
+            if statement.name in self.scope.strings:
+                if not self.expr_is_string(statement.expr):
+                    raise CompileError('cannot assign an integer to a string')
+                self.emit_string_assign(statement.name, statement.expr)
+                return
             self.emit_num(statement.expr)
             self.emit_instr(f'LOCAL_SET {self.scope.index(statement.name)}')
             array = self.pointer_descriptor(statement.expr)
@@ -629,17 +879,16 @@ class Codegen:
             return
 
         if isinstance(statement, nodes.AssignIndex):
+            if self.expr_is_string(statement.target.base):
+                raise CompileError('string bytes are read-only')
             self.emit_num(statement.expr)
             _, width = self.emit_index_address(statement.target)
             self.emit_instr(STORE_OPS[width])
             return
 
         if isinstance(statement, nodes.Print):
-            if isinstance(statement.expr, nodes.Str):
-                label = self.intern_string(statement.expr.value)
-                length = self.strings[statement.expr.value][1]
-                self.emit_instr(f'PUSH {label}')
-                self.emit_instr(f'PUSH {length}')
+            if self.expr_is_string(statement.expr):
+                self.emit_string_expr(statement.expr)
                 self.emit_instr('PRINT_STR')
             else:
                 self.emit_num(statement.expr)
@@ -660,6 +909,13 @@ class Codegen:
                 return
             if statement.name in INTRINSIC_ARITY:
                 self.emit_intrinsic_statement(statement)
+                return
+            if statement.name in STRING_BINDINGS:
+                if statement.name == 'slice':
+                    raise CompileError('slice result requires a string local')
+                self.emit_string_call(statement)
+                if statement.name not in STRING_VOID_BINDINGS:
+                    self.emit_instr('POP')
                 return
             self.emit_call(statement, keep_result=False)
             return
@@ -749,7 +1005,8 @@ class Codegen:
 
         self.emit(f'; Generated by luac from {self.source_name}')
         self.emit('INCLUDE "console.asm"')
-        for include in ('screen.asm', 'controller.asm', 'timer.asm'):
+        for include in ('screen.asm', 'controller.asm', 'timer.asm',
+                        'strings.asm'):
             if include in self.includes:
                 self.emit(f'INCLUDE "{include}"')
         if self.constants:

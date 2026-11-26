@@ -23,10 +23,14 @@ committed on its own before the next one starts.
 - Top-level `const` values and initialized byte/word/quad data tables.
 - Device intrinsics: `screen_size`, `set_color`, `plot`, `draw`, `clear`,
   `read_key`, `quit_requested`, `now_ms`, and `sleep`.
-- Output: `print(integer_expr)` and `print("string literal")`.
+- String locals hold `(address, length)` pairs; literals, string variables,
+  `slice`, byte indexing, and the `strlen`, `print_str`, `strcmp`, `strfind`,
+  `strchr`, and `strcpy` bindings are supported.
+- Output: `print(integer_expr)` and `print(string_expr)`.
 - Static string literals are emitted as `(address, length)` buffers.
 
-Not supported yet: string values, modules, or Lua source-line mapping.
+Not supported yet: string function parameters/returns, modules, or Lua
+source-line mapping.
 
 ## Work items
 
@@ -38,7 +42,7 @@ Not supported yet: string values, modules, or Lua source-line mapping.
 | 4 | Bitwise operators and hex literals | Done | `&`, `|`, binary `~`/unary `~`, `<<`, `>>`, `0x...`. |
 | 5 | Static data declarations | Done | `const`, `bytes`/`words`/`quads` tables, `EQU`/`DB`/`DW`/`DQ`. |
 | 6 | Device/runtime intrinsics | Done | Screen, controller, timer macros; `DEO 0x41` sleep; SDL3/WASM smoke. |
-| 7 | Strings as values and string library bindings | Pending | String variables, `STRLENZ`, `PRINT_STR`, indexing/slicing. |
+| 7 | Strings as values and string library bindings | Done | `(addr, len)` locals, stdlib bindings, read-only indexing, clamped slicing. |
 | 8 | Modules/includes | Pending | Split source files sharing constants, data, and functions. |
 | 9 | Source-line mapping, `break`/`continue`, `elseif` | Pending | Debuggability and cleaner control flow for larger programs. |
 
@@ -222,13 +226,20 @@ print(title)
 local n = strlen(title)
 ```
 
-**Design.** Represent strings as `(addr, length)` pairs. Since VM locals are
-single cells, string values need a small descriptor table or stack-pair
-convention; this item chooses and implements that representation. Bind
-`strlen`, `print_str`, `strcmp`, and slicing to `stdlib/strings.asm`.
+**Design.** A string local reserves two VM cells: `addr` then `length`. Every
+string expression pushes that pair in the same order, and assignment writes the
+length slot before the address slot. Literals and string locals can be passed to
+`strlen`, `print_str`, `strcmp`, `strfind`, `strchr`, and `strcpy`; only the
+bindings that need runtime helpers include `stdlib/strings.asm`. `slice(s,
+start, count)` is compiled inline with constant offsets and emits a new pair
+clamped to the source bounds. Byte indexing reads one byte from `addr + i` and
+is read-only; string values cannot be used in integer arithmetic or returned
+from functions.
 
-**Acceptance.** String literals may be assigned, passed, stored, indexed, and
-printed; golden output includes multi-line text.
+**Acceptance.** The golden fixture assigns literals to string locals, prints
+them (including embedded newlines), measures and compares them, indexes and
+searches them, slices to a shorter string, copies a slice into heap memory, and
+frees that buffer.
 
 ### 8. Modules/includes
 
@@ -287,3 +298,5 @@ skip or exit without flag variables.
   reserve four bytes per element.
 - **Item 6** — screen/controller/timer intrinsics and `sleep`; golden fixture
   `tests/lua/devices.lua` plus SDL3/WASM device smoke runs.
+- **Item 7** — `(addr, len)` string locals, stdlib bindings, read-only indexing,
+  and clamped slicing; golden fixture `tests/lua/strings.lua`.
