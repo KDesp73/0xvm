@@ -65,6 +65,8 @@ SNAKE_ROM = $(BUILD_DIR)/snake.rom
 SNAKE_SMOKE_SRC = $(BUILD_DIR)/snake-smoke.asm
 SNAKE_SMOKE_ROM = $(BUILD_DIR)/snake-smoke.rom
 TYPOGRAPHY_ROM = $(BUILD_DIR)/typography.rom
+TYPOGRAPHY_DIR = examples/typography
+TYPOGRAPHY_SRC = $(wildcard $(TYPOGRAPHY_DIR)/*.asm)
 TYPOGRAPHY_SMOKE_SRC = $(BUILD_DIR)/typography-smoke.asm
 TYPOGRAPHY_SMOKE_ROM = $(BUILD_DIR)/typography-smoke.rom
 CONFORMANCE_EXPECTED = $(TEST_DIR)/conformance.expected
@@ -224,13 +226,15 @@ snake-check: $(SNAKE_ROM) $(SNAKE_SMOKE_ROM) $(SDL_HOST)
 		exit 0
 endif
 
-$(TYPOGRAPHY_ROM): examples/typography.asm $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
+$(TYPOGRAPHY_ROM): examples/typography.asm $(TYPOGRAPHY_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm | $(BUILD_DIR)
 	@echo "[INFO] Building typography ROM"
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
 
-$(TYPOGRAPHY_SMOKE_SRC): examples/typography.asm | $(BUILD_DIR)
-	@sed -e 's/^EQU FRAME_MS     66/EQU FRAME_MS     1/' \
-	     -e 's/^EQU MAX_FRAMES   0/EQU MAX_FRAMES   3/' $< > $@
+# Overrides go before the includes; constants.asm honours them via IFNDEF.
+$(TYPOGRAPHY_SMOKE_SRC): examples/typography.asm $(TYPOGRAPHY_SRC) | $(BUILD_DIR)
+	@{ printf 'EQU FRAME_MS 1\nEQU MAX_FRAMES 3\n'; \
+	   sed -e 's|INCLUDE "typography/|INCLUDE "../examples/typography/|' $<; \
+	 } > $@
 
 $(TYPOGRAPHY_SMOKE_ROM): $(TYPOGRAPHY_SMOKE_SRC) $(STDLIB_SRC) $(BUILD_DIR)/0xasm
 	@./$(BUILD_DIR)/0xasm -f $< -o $@
